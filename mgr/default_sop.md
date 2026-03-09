@@ -23,6 +23,17 @@ not re-ask the same question. Trust the decision and move forward.
 
 ---
 
+## Terminal Naming
+
+When you first list terminals and see generic names (like "iTerm2 - bash", "Terminal - zsh"),
+read the content of each terminal to understand what's running. Then suggest descriptive
+names to the user using rename_terminal — for example "dev-server", "db-console", "build-logs".
+
+Good naming makes it much easier for the user to identify terminals at a glance, especially
+when managing multiple sessions. Proactively suggest names; don't wait to be asked.
+
+---
+
 ## Stuck Terminal Detection
 
 ## Smart Diff — Detecting Stuck Sessions

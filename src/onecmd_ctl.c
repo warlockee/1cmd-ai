@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "backend.h"
 #include "sds.h"
@@ -73,6 +74,70 @@ static int connect_to_id(const char *id) {
 }
 
 /* ============================================================================
+ * Terminal Aliases
+ * ========================================================================= */
+
+#define ALIASES_PATH ".onecmd/aliases.json"
+
+static cJSON *ctl_read_aliases(void) {
+    FILE *f = fopen(ALIASES_PATH, "r");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (len <= 0) { fclose(f); return NULL; }
+
+    char *buf = malloc(len + 1);
+    if (!buf) { fclose(f); return NULL; }
+
+    fread(buf, 1, len, f);
+    buf[len] = '\0';
+    fclose(f);
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    return root;
+}
+
+static sds ctl_get_alias(const char *terminal_id) {
+    cJSON *root = ctl_read_aliases();
+    if (!root) return NULL;
+
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, terminal_id);
+    sds result = NULL;
+    if (cJSON_IsString(item) && item->valuestring[0]) {
+        result = sdsnew(item->valuestring);
+    }
+
+    cJSON_Delete(root);
+    return result;
+}
+
+static void ctl_save_alias(const char *terminal_id, const char *name) {
+    mkdir(".onecmd", 0755);
+
+    cJSON *root = ctl_read_aliases();
+    if (!root) root = cJSON_CreateObject();
+
+    cJSON_DeleteItemFromObjectCaseSensitive(root, terminal_id);
+    cJSON_AddStringToObject(root, terminal_id, name);
+
+    char *json = cJSON_Print(root);
+    if (json) {
+        FILE *f = fopen(ALIASES_PATH, "w");
+        if (f) {
+            fputs(json, f);
+            fclose(f);
+        }
+        free(json);
+    }
+
+    cJSON_Delete(root);
+}
+
+/* ============================================================================
  * Commands
  * ========================================================================= */
 
@@ -87,6 +152,11 @@ static int cmd_list(void) {
         cJSON_AddNumberToObject(obj, "pid", (double)TermList[i].pid);
         cJSON_AddStringToObject(obj, "name", TermList[i].name);
         cJSON_AddStringToObject(obj, "title", TermList[i].title);
+        sds alias = ctl_get_alias(TermList[i].id);
+        if (alias) {
+            cJSON_AddStringToObject(obj, "alias", alias);
+            sdsfree(alias);
+        }
         cJSON_AddItemToArray(arr, obj);
     }
 
@@ -143,6 +213,12 @@ static int cmd_status(const char *id) {
     return alive ? 0 : 1;
 }
 
+static int cmd_rename(const char *id, const char *name) {
+    ctl_save_alias(id, name);
+    printf("Renamed terminal '%s' to '%s'.\n", id, name);
+    return 0;
+}
+
 /* ============================================================================
  * Usage and main
  * ========================================================================= */
@@ -156,6 +232,7 @@ static void usage(void) {
         "  capture <id>      Capture terminal text\n"
         "  send <id> <keys>  Send keystrokes\n"
         "  status <id>       Check if terminal is alive\n"
+        "  rename <id> <name>  Set a custom name for a terminal\n"
         "\n"
         "Options:\n"
         "  --danger          Include non-terminal windows (macOS)\n"
@@ -207,6 +284,12 @@ int main(int argc, char **argv) {
             return 1;
         }
         return cmd_status(argv[argi + 1]);
+    } else if (strcmp(cmd, "rename") == 0) {
+        if (argi + 2 >= argc) {
+            fprintf(stderr, "Usage: onecmd-ctl rename <id> <name>\n");
+            return 1;
+        }
+        return cmd_rename(argv[argi + 1], argv[argi + 2]);
     } else {
         fprintf(stderr, "Unknown command: %s\n", cmd);
         usage();

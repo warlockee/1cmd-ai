@@ -9,11 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 
 #include "types.h"
 #include "format.h"
 #include "backend.h"
 #include "sds.h"
+#include "cJSON.h"
 
 /* ============================================================================
  * Text Escaping
@@ -47,6 +49,74 @@ sds html_escape(const char *text) {
 }
 
 /* ============================================================================
+ * Terminal Aliases
+ * ========================================================================= */
+
+#define ALIASES_PATH ".onecmd/aliases.json"
+
+/* Read aliases JSON file, returns parsed cJSON object or NULL. */
+static cJSON *read_aliases_file(void) {
+    FILE *f = fopen(ALIASES_PATH, "r");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (len <= 0) { fclose(f); return NULL; }
+
+    char *buf = malloc(len + 1);
+    if (!buf) { fclose(f); return NULL; }
+
+    fread(buf, 1, len, f);
+    buf[len] = '\0';
+    fclose(f);
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    return root;
+}
+
+/* Get alias for a terminal ID. Returns sds string or NULL. Caller frees. */
+sds get_alias(const char *terminal_id) {
+    cJSON *root = read_aliases_file();
+    if (!root) return NULL;
+
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(root, terminal_id);
+    sds result = NULL;
+    if (cJSON_IsString(item) && item->valuestring[0]) {
+        result = sdsnew(item->valuestring);
+    }
+
+    cJSON_Delete(root);
+    return result;
+}
+
+/* Save an alias for a terminal ID. Creates .onecmd/ dir if needed. */
+void save_alias(const char *terminal_id, const char *name) {
+    mkdir(".onecmd", 0755);
+
+    cJSON *root = read_aliases_file();
+    if (!root) root = cJSON_CreateObject();
+
+    /* Remove existing entry if present, then add new one. */
+    cJSON_DeleteItemFromObjectCaseSensitive(root, terminal_id);
+    cJSON_AddStringToObject(root, terminal_id, name);
+
+    char *json = cJSON_Print(root);
+    if (json) {
+        FILE *f = fopen(ALIASES_PATH, "w");
+        if (f) {
+            fputs(json, f);
+            fclose(f);
+        }
+        free(json);
+    }
+
+    cJSON_Delete(root);
+}
+
+/* ============================================================================
  * Message Builders
  * ========================================================================= */
 
@@ -65,12 +135,26 @@ sds build_list_message(void) {
         TermInfo *t = &TermList[i];
         sds ename = markdown_escape(t->name);
         sds etitle = markdown_escape(t->title);
-        if (t->title[0]) {
-            msg = sdscatprintf(msg, ".%d %s - %s\n",
-                               i + 1, ename, etitle);
+        sds alias = get_alias(t->id);
+        if (alias) {
+            sds ealias = markdown_escape(alias);
+            if (t->title[0]) {
+                msg = sdscatprintf(msg, ".%d [%s] %s - %s\n",
+                                   i + 1, ealias, ename, etitle);
+            } else {
+                msg = sdscatprintf(msg, ".%d [%s] %s\n",
+                                   i + 1, ealias, ename);
+            }
+            sdsfree(ealias);
+            sdsfree(alias);
         } else {
-            msg = sdscatprintf(msg, ".%d %s\n",
-                               i + 1, ename);
+            if (t->title[0]) {
+                msg = sdscatprintf(msg, ".%d %s - %s\n",
+                                   i + 1, ename, etitle);
+            } else {
+                msg = sdscatprintf(msg, ".%d %s\n",
+                                   i + 1, ename);
+            }
         }
         sdsfree(ename);
         sdsfree(etitle);
@@ -83,6 +167,7 @@ sds build_help_message(void) {
         "Commands:\n"
         ".list - Show terminal windows\n"
         ".1 .2 ... - Connect to window\n"
+        ".rename N name - Name a terminal\n"
         ".mgr - Toggle AI manager mode\n"
         ".exit - Leave manager mode\n"
         ".health - Manager health report\n"

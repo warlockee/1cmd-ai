@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from typing import Any
@@ -102,10 +103,14 @@ def _raw_list_terminals() -> list[dict[str, Any]]:
 def list_terminals() -> list[dict[str, Any]]:
     _ensure_polling()
     terminals = _raw_list_terminals()
+    aliases = _read_aliases()
     for t in terminals:
         ago = _format_ago(t["id"])
         if ago:
             t["last_active"] = ago
+        alias = aliases.get(str(t["id"]))
+        if alias:
+            t["alias"] = alias
     return terminals
 
 _CAPTURE_LINES: int = 80  # Roughly one screen worth of output
@@ -140,6 +145,31 @@ def send_keys(terminal_id: str, keys: str) -> str:
     return "Keys sent successfully."
 
 # ---------------------------------------------------------------------------
+# Terminal aliases
+# ---------------------------------------------------------------------------
+
+ALIASES_PATH = ".onecmd/aliases.json"
+
+def _read_aliases() -> dict[str, str]:
+    try:
+        with open(ALIASES_PATH, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def _write_aliases(aliases: dict[str, str]) -> None:
+    os.makedirs(".onecmd", exist_ok=True)
+    with open(ALIASES_PATH, "w") as f:
+        json.dump(aliases, f, indent=2)
+
+def rename_terminal(terminal_id: str, name: str) -> str:
+    """Set a custom name for a terminal."""
+    aliases = _read_aliases()
+    aliases[terminal_id] = name
+    _write_aliases(aliases)
+    return f"Terminal '{terminal_id}' renamed to '{name}'."
+
+# ---------------------------------------------------------------------------
 # Claude API tools
 # ---------------------------------------------------------------------------
 
@@ -148,6 +178,29 @@ TOOLS: list[dict[str, Any]] = [
         "name": "list_terminals",
         "description": "List all available terminal sessions with their IDs, names, and titles.",
         "input_schema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "rename_terminal",
+        "description": (
+            "Give a terminal a custom name for easy identification. "
+            "When you first list terminals and see generic names like 'iTerm2 - bash', "
+            "proactively suggest descriptive names based on what's running in each terminal "
+            "(e.g. 'dev-server', 'db-console', 'build-logs')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "terminal_id": {
+                    "type": "string",
+                    "description": "Terminal ID from list_terminals"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Custom name for the terminal (e.g. 'dev-server', 'logs')"
+                }
+            },
+            "required": ["terminal_id", "name"]
+        }
     },
     {
         "name": "read_terminal",

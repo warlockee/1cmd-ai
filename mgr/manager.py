@@ -21,7 +21,7 @@ from utils import (
     _create_client_for, get_active_provider, get_active_provider_and_model,
 )
 import llm as llm_mod
-from tools import TOOLS, list_terminals, capture_terminal, capture_terminal_tail, send_keys
+from tools import TOOLS, list_terminals, capture_terminal, capture_terminal_tail, send_keys, rename_terminal
 from memory import _init_memory_db, _load_memories, _save_memory, _delete_memory, MEMORY_DB_PATH
 from sop import ensure_sop
 from stats import STATS
@@ -354,15 +354,21 @@ IMPORTANT:
                 return "No terminals found."
             lines: list[str] = []
             for t in terminals:
+                alias: str = f" [{t['alias']}]" if t.get('alias') else ""
                 title: str = f" \u2014 {t['title']}" if t.get('title') else ""
                 activity: str = t.get('last_active', '')
                 act_str: str = f" ({activity})" if activity else ""
-                lines.append(f"Terminal {t['index']} [{t['id']}]: {t['name']}{title}{act_str}")
+                lines.append(f"Terminal {t['index']}{alias} [{t['id']}]: {t['name']}{title}{act_str}")
             return "\n".join(lines)
 
         elif tool_name == "read_terminal":
             tid: str = tool_input["terminal_id"]
             return capture_terminal_tail(tid)
+
+        elif tool_name == "rename_terminal":
+            tid = tool_input["terminal_id"]
+            name: str = tool_input["name"]
+            return rename_terminal(tid, name)
 
         elif tool_name == "send_command":
             tid = tool_input["terminal_id"]
