@@ -18,6 +18,23 @@ SOP_FILE: str = "agent_sop.md"
 CUSTOM_RULES_FILE: str = "custom_rules.md"
 DEFAULT_SOP: Path = Path(__file__).parent / "default_sop.md"
 
+_CUSTOM_RULES_TEMPLATE: str = """\
+# Custom Rules
+#
+# Add your own rules here. These are appended to the default SOP
+# and guide how the AI manager behaves.
+#
+# Lines starting with # are comments and ignored.
+#
+# Examples (uncomment to use):
+#
+# - Always run tests before deploying
+# - Never restart the database without asking me first
+# - Prefer yarn over npm
+# - When a build fails, check the logs before retrying
+# - Summarize what you did after completing a task
+"""
+
 
 def _read_default() -> str:
     """Read the shipped default SOP."""
@@ -47,13 +64,22 @@ def ensure_sop() -> str:
     except OSError:
         content = _read_default()
 
+    # Create custom rules template if it doesn't exist
+    if not custom_path.exists():
+        try:
+            custom_path.write_text(_CUSTOM_RULES_TEMPLATE)
+            logger.info("Created custom rules template at %s", custom_path)
+        except OSError:
+            pass
+
     # Append custom rules if present
     if custom_path.exists():
         try:
-            custom = custom_path.read_text().strip()
-            if custom:
-                content += "\n\n---\n\n## Custom Rules\n\n" + custom
-                logger.info("Loaded custom rules from %s", custom_path)
+            lines = custom_path.read_text().splitlines()
+            rules = [l for l in lines if l.strip() and not l.strip().startswith("#")]
+            if rules:
+                content += "\n\n---\n\n## Custom Rules\n\n" + "\n".join(rules)
+                logger.info("Loaded %d custom rules from %s", len(rules), custom_path)
         except OSError:
             pass
 
