@@ -170,33 +170,28 @@ echo -e "${BOLD}AI Manager${NC}"
 echo ""
 echo "  OneCmd includes an AI manager that monitors your terminals,"
 echo "  answers questions, and executes tasks autonomously."
-echo "  Requires a Google (Gemini) or Anthropic (Claude) API key."
-echo ""
-echo "  1) Google Gemini  (recommended — fast and free tier available)"
-echo "  2) Anthropic Claude"
-echo "  3) Skip for now"
-echo ""
-read -p "  Choose [1/2/3]: " -n 1 -r MGR_CHOICE
+echo "  You can configure one or both AI providers."
+echo "  If both are set, Gemini is used by default with Claude as fallback."
 echo ""
 
-LLM_KEY=""
-LLM_VAR=""
-if [[ "$MGR_CHOICE" == "1" ]]; then
-    read -p "  Google API key: " LLM_KEY
-    LLM_KEY=$(echo "$LLM_KEY" | tr -d '[:space:]')
-    LLM_VAR="GOOGLE_API_KEY"
-elif [[ "$MGR_CHOICE" == "2" ]]; then
-    read -p "  Anthropic API key: " LLM_KEY
-    LLM_KEY=$(echo "$LLM_KEY" | tr -d '[:space:]')
-    LLM_VAR="ANTHROPIC_API_KEY"
+GOOGLE_KEY=""
+ANTHROPIC_KEY=""
+
+read -p "  Google API key (Enter to skip): " GOOGLE_KEY
+GOOGLE_KEY=$(echo "$GOOGLE_KEY" | tr -d '[:space:]')
+
+read -p "  Anthropic API key (Enter to skip): " ANTHROPIC_KEY
+ANTHROPIC_KEY=$(echo "$ANTHROPIC_KEY" | tr -d '[:space:]')
+
+HAS_LLM=""
+[[ -n "$GOOGLE_KEY" ]] && HAS_LLM=1
+[[ -n "$ANTHROPIC_KEY" ]] && HAS_LLM=1
+
+if [[ -z "$HAS_LLM" ]]; then
+    warn "No API keys provided. AI manager will be unavailable."
 fi
 
-if [[ -n "$LLM_VAR" && -z "$LLM_KEY" ]]; then
-    warn "No API key provided. Skipping AI manager."
-    LLM_VAR=""
-fi
-
-if [[ -n "$LLM_VAR" ]]; then
+if [[ -n "$HAS_LLM" ]]; then
     info "Setting up Python environment for AI manager..."
     if command -v python3 &>/dev/null; then
         python3 -m venv mgr/.venv 2>/dev/null || true
@@ -205,11 +200,11 @@ if [[ -n "$LLM_VAR" ]]; then
             ok "AI manager dependencies installed."
         else
             warn "Failed to create Python venv. AI manager unavailable."
-            LLM_VAR=""
+            HAS_LLM=""
         fi
     else
         warn "python3 not found. AI manager requires Python 3."
-        LLM_VAR=""
+        HAS_LLM=""
     fi
 fi
 
@@ -234,9 +229,8 @@ ENV_FILE=".env"
 {
     echo "# OneCmd environment — keep this file private"
     echo "TELEGRAM_BOT_TOKEN=$(tr -d '[:space:]' < apikey.txt)"
-    if [[ -n "$LLM_VAR" ]]; then
-        echo "$LLM_VAR=$LLM_KEY"
-    fi
+    [[ -n "$GOOGLE_KEY" ]] && echo "GOOGLE_API_KEY=$GOOGLE_KEY"
+    [[ -n "$ANTHROPIC_KEY" ]] && echo "ANTHROPIC_API_KEY=$ANTHROPIC_KEY"
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 ok "Created .env (mode 600)"
