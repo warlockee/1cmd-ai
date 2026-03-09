@@ -1,8 +1,6 @@
 # OneCmd
 
-Control your terminal from Telegram. Send keystrokes, read terminal output — all from your phone.
-
-![screenrecording](https://github.com/user-attachments/assets/64602166-6016-4909-bf17-fcabe03002ad)
+A more specialized 'OpenClaw' for managing terminals — all from your phone.
 
 Works on **macOS** and **Linux**.
 
