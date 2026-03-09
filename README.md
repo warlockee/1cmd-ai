@@ -81,10 +81,11 @@ Custom rules are appended to the default SOP automatically — no need to edit t
 `onecmd-ctl` is a standalone CLI tool used by the manager agent. You can also use it directly:
 
 ```bash
-onecmd-ctl list                    # List terminals as JSON
+onecmd-ctl list                    # List terminals as JSON (includes aliases)
 onecmd-ctl capture <terminal_id>   # Capture visible text from a terminal
 onecmd-ctl send <terminal_id> <keys>  # Send keystrokes to a terminal
 onecmd-ctl status <terminal_id>    # Check if a terminal is alive
+onecmd-ctl rename <terminal_id> <name>  # Set a custom name for a terminal
 ```
 
 Terminal IDs come from the `list` output (e.g. `12399` on macOS, `%0` on tmux).
@@ -99,6 +100,7 @@ In manual mode, any text you send is typed directly into the connected terminal 
 |---------|--------|
 | `.list` | List available terminal sessions |
 | `.1` `.2` ... | Connect to a session by number |
+| `.rename N name` | Name a terminal for easy identification |
 | `.help` | Show all commands |
 | Any other text | Sent as keystrokes to the connected terminal |
 

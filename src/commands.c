@@ -176,6 +176,31 @@ void handle_request(sqlite3 *db, BotRequest *br) {
         goto done;
     }
 
+    /* Handle .rename N name command. */
+    if (strncasecmp(req, ".rename", 7) == 0) {
+        char *arg = req + 7;
+        while (*arg == ' ') arg++;
+        int n = atoi(arg);
+        /* Skip past the number to get the name. */
+        while (*arg && isdigit((unsigned char)*arg)) arg++;
+        while (*arg == ' ') arg++;
+        if (n < 1 || *arg == '\0') {
+            botSendMessage(br->target, "Usage: .rename N name", 0);
+            goto done;
+        }
+        backend_list();
+        if (n > TermCount) {
+            botSendMessage(br->target, "Invalid window number.", 0);
+            goto done;
+        }
+        TermInfo *t = &TermList[n - 1];
+        save_alias(t->id, arg);
+        sds msg = sdscatprintf(sdsempty(), "Terminal %d renamed to [%s].", n, arg);
+        botSendMessage(br->target, msg, 0);
+        sdsfree(msg);
+        goto done;
+    }
+
     /* Handle .health command: query manager for health report. */
     if (strcasecmp(req, ".health") == 0) {
         if (MgrPath[0] == '\0') {

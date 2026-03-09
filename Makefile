@@ -42,7 +42,7 @@ commands.o: src/commands.c include/commands.h include/bot.h include/types.h incl
 totp.o: src/totp.c include/totp.h vendor/sha1.h
 	$(CC) $(CFLAGS) $(INCLUDES) -c src/totp.c
 
-format.o: src/format.c include/format.h include/types.h
+format.o: src/format.c include/format.h include/types.h vendor/cJSON.h
 	$(CC) $(CFLAGS) $(INCLUDES) -c src/format.c
 
 terminal_display.o: src/terminal_display.c include/terminal_io.h include/backend.h

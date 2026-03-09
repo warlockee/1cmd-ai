@@ -23,6 +23,12 @@ sds markdown_escape(const char *s);
 /* Escape text for Telegram HTML parse mode. */
 sds html_escape(const char *text);
 
+/* Get alias for a terminal ID. Returns sds string or NULL. Caller frees. */
+sds get_alias(const char *terminal_id);
+
+/* Save an alias for a terminal ID to .onecmd/aliases.json. */
+void save_alias(const char *terminal_id, const char *name);
+
 /* Build the .list response message. */
 sds build_list_message(void);
 
