@@ -56,7 +56,17 @@ ANTHROPIC_API_KEY=sk-... ./onecmd --apikey YOUR_BOT_TOKEN
 
 ### Standard Operating Procedure
 
-On first run, the manager generates `.onecmd/agent_sop.md` — a Standard Operating Procedure that guides the AI on stuck terminal detection and recovery. You can edit this file to customize the agent's behavior.
+On first run, the manager copies the default SOP to `.onecmd/agent_sop.md`. This file guides the AI on decision-making and stuck terminal recovery.
+
+To add your own rules, create `.onecmd/custom_rules.md`:
+
+```markdown
+- Always run tests before deploying
+- Never restart the database without asking me first
+- Prefer yarn over npm
+```
+
+Custom rules are appended to the default SOP automatically — no need to edit the base file.
 
 ### Manager commands
 
