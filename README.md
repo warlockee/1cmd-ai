@@ -210,5 +210,3 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed technical documentation: com
 ## License
 
 MIT -- see [LICENSE](LICENSE).
-
-Based on [tgterm](https://github.com/antirez/tgterm) by Salvatore Sanfilippo (antirez).
