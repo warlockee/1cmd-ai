@@ -20,19 +20,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 if [ ! -f "$SCRIPT_DIR/Makefile" ]; then
     info "Cloning onecmd..."
     git clone https://github.com/warlockee/1cmd-ai.git
-    cd onecmd
+    cd 1cmd-ai
     exec ./setup.sh "$@" < /dev/tty
 fi
 
 cd "$SCRIPT_DIR"
 
 echo -e "${BOLD}"
-echo "                                   "
-echo "  _ __   __ _  ___ ___  ___  _ __  "
-echo " | '_ \ / _\` |/ __/ _ \/ _ \| '_ \ "
-echo " | |_) | (_| | (_|  __/ (_) | | | |"
-echo " | .__/ \__,_|\___\___|\___/|_| |_|"
-echo " |_|                               "
+echo "                                      "
+echo "   ___  _ __   ___  ___ _ __ ___   __| |"
+echo "  / _ \| '_ \ / _ \/ __| '_ \` _ \ / _\` |"
+echo " | (_) | | | |  __/ (__| | | | | | (_| |"
+echo "  \___/|_| |_|\___|\___|_| |_| |_|\__,_|"
 echo ""
 echo -e "${NC}  Control your terminal from Telegram"
 echo ""
@@ -56,7 +55,9 @@ elif [[ "$OS" == "Linux" ]]; then
     MISSING=""
     command -v gcc &>/dev/null || MISSING="$MISSING gcc"
     command -v make &>/dev/null || MISSING="$MISSING make"
+    command -v curl &>/dev/null || MISSING="$MISSING curl"
     command -v tmux &>/dev/null || MISSING="$MISSING tmux"
+    command -v pkg-config &>/dev/null || MISSING="$MISSING pkg-config"
     pkg-config --exists libcurl 2>/dev/null || MISSING="$MISSING libcurl-dev"
     pkg-config --exists sqlite3 2>/dev/null || MISSING="$MISSING libsqlite3-dev"
 
@@ -66,19 +67,22 @@ elif [[ "$OS" == "Linux" ]]; then
         if command -v apt-get &>/dev/null; then
             # Map package names for apt
             PKGS=""
-            [[ "$MISSING" == *gcc* ]] && PKGS="$PKGS build-essential"
-            [[ "$MISSING" == *make* ]] && PKGS="$PKGS build-essential"
-            [[ "$MISSING" == *tmux* ]] && PKGS="$PKGS tmux"
-            [[ "$MISSING" == *libcurl* ]] && PKGS="$PKGS libcurl4-openssl-dev"
-            [[ "$MISSING" == *libsqlite3* ]] && PKGS="$PKGS libsqlite3-dev"
+            [[ " $MISSING " == *" gcc "* || " $MISSING " == *" make "* ]] && PKGS="$PKGS build-essential"
+            [[ " $MISSING " == *" curl "* ]] && PKGS="$PKGS curl"
+            [[ " $MISSING " == *" tmux "* ]] && PKGS="$PKGS tmux"
+            [[ " $MISSING " == *" pkg-config "* ]] && PKGS="$PKGS pkg-config"
+            [[ " $MISSING " == *" libcurl-dev "* ]] && PKGS="$PKGS libcurl4-openssl-dev"
+            [[ " $MISSING " == *" libsqlite3-dev "* ]] && PKGS="$PKGS libsqlite3-dev"
             sudo apt-get update -qq && sudo apt-get install -y $PKGS
         elif command -v yum &>/dev/null; then
             PKGS=""
-            [[ "$MISSING" == *gcc* ]] && PKGS="$PKGS gcc"
-            [[ "$MISSING" == *make* ]] && PKGS="$PKGS make"
-            [[ "$MISSING" == *tmux* ]] && PKGS="$PKGS tmux"
-            [[ "$MISSING" == *libcurl* ]] && PKGS="$PKGS libcurl-devel"
-            [[ "$MISSING" == *libsqlite3* ]] && PKGS="$PKGS sqlite-devel"
+            [[ " $MISSING " == *" gcc "* ]] && PKGS="$PKGS gcc"
+            [[ " $MISSING " == *" make "* ]] && PKGS="$PKGS make"
+            [[ " $MISSING " == *" curl "* ]] && PKGS="$PKGS curl"
+            [[ " $MISSING " == *" tmux "* ]] && PKGS="$PKGS tmux"
+            [[ " $MISSING " == *" pkg-config "* ]] && PKGS="$PKGS pkgconf-pkg-config"
+            [[ " $MISSING " == *" libcurl-dev "* ]] && PKGS="$PKGS libcurl-devel"
+            [[ " $MISSING " == *" libsqlite3-dev "* ]] && PKGS="$PKGS sqlite-devel"
             sudo yum install -y $PKGS
         else
             err "Please install:$MISSING"
@@ -104,7 +108,7 @@ fi
 # Step 3: API key setup
 echo ""
 if [ -f apikey.txt ]; then
-    EXISTING_KEY=$(cat apikey.txt | tr -d '[:space:]')
+    EXISTING_KEY=$(tr -d '[:space:]' < apikey.txt)
     ok "Found existing API key in apikey.txt"
     echo -e "   Current key: ${BOLD}${EXISTING_KEY:0:10}...${NC}"
     echo ""
@@ -145,18 +149,22 @@ if [ ! -f apikey.txt ]; then
 
     # Validate the token
     info "Validating token..."
-    RESPONSE=$(curl -s "https://api.telegram.org/bot${API_KEY}/getMe")
+    if ! RESPONSE=$(curl -s --connect-timeout 10 "https://api.telegram.org/bot${API_KEY}/getMe"); then
+        err "Could not reach Telegram API. Check your internet connection."
+        exit 1
+    fi
     if echo "$RESPONSE" | grep -q '"ok":true'; then
         BOT_USERNAME=$(echo "$RESPONSE" | grep -o '"username":"[^"]*"' | cut -d'"' -f4)
         ok "Token valid! Bot: @${BOT_USERNAME}"
         echo "$API_KEY" > apikey.txt
+        chmod 600 apikey.txt
     else
         err "Invalid token. Please check and try again."
         exit 1
     fi
 fi
 
-# Step 3b: AI Manager setup
+# Step 4: AI Manager setup
 echo ""
 echo -e "${BOLD}AI Manager${NC}"
 echo ""
@@ -205,10 +213,6 @@ if [[ -n "$LLM_VAR" ]]; then
     fi
 fi
 
-# Step 4: Done — OTP is off by default for simplicity.
-# Users can enable it later with --enable-otp.
-EXTRA_FLAGS=""
-
 # Step 5: Accessibility permission check (macOS only)
 if [[ "$OS" == "Darwin" ]]; then
     echo ""
@@ -225,21 +229,28 @@ if [[ "$OS" == "Darwin" ]]; then
     echo ""
 fi
 
-# Step 6: Create launch script
-if [[ -n "$LLM_VAR" ]]; then
-cat > run.sh << RUNEOF
+# Step 6: Create .env and launch script
+ENV_FILE=".env"
+{
+    echo "# OneCmd environment — keep this file private"
+    echo "TELEGRAM_BOT_TOKEN=$(tr -d '[:space:]' < apikey.txt)"
+    if [[ -n "$LLM_VAR" ]]; then
+        echo "$LLM_VAR=$LLM_KEY"
+    fi
+} > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+ok "Created .env (mode 600)"
+
+cat > run.sh << 'RUNEOF'
 #!/bin/bash
-cd "\$(dirname "\$0")"
-export $LLM_VAR="$LLM_KEY"
-exec ./onecmd $EXTRA_FLAGS "\$@"
-RUNEOF
-else
-cat > run.sh << RUNEOF
-#!/bin/bash
-cd "\$(dirname "\$0")"
-exec ./onecmd $EXTRA_FLAGS "\$@"
-RUNEOF
+cd "$(dirname "$0")"
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
 fi
+exec ./onecmd "$@"
+RUNEOF
 chmod +x run.sh
 ok "Created run.sh"
 
