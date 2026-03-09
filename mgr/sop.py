@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 SOP_DIR: str = ".onecmd"
 SOP_FILE: str = "agent_sop.md"
+CUSTOM_RULES_FILE: str = "custom_rules.md"
 DEFAULT_SOP: Path = Path(__file__).parent / "default_sop.md"
 
 
@@ -28,8 +29,9 @@ def _read_default() -> str:
 
 
 def ensure_sop() -> str:
-    """Ensure the SOP file exists. Returns the SOP content."""
+    """Ensure the SOP file exists. Returns default SOP + custom rules."""
     sop_path: Path = Path(SOP_DIR) / SOP_FILE
+    custom_path: Path = Path(SOP_DIR) / CUSTOM_RULES_FILE
 
     if not sop_path.exists():
         try:
@@ -38,9 +40,21 @@ def ensure_sop() -> str:
             logger.info("Copied default SOP to %s", sop_path)
         except OSError as e:
             logger.warning("Could not write SOP file: %s", e)
-            return _read_default()
 
+    # Read base SOP
     try:
-        return sop_path.read_text()
+        content = sop_path.read_text()
     except OSError:
-        return _read_default()
+        content = _read_default()
+
+    # Append custom rules if present
+    if custom_path.exists():
+        try:
+            custom = custom_path.read_text().strip()
+            if custom:
+                content += "\n\n---\n\n## Custom Rules\n\n" + custom
+                logger.info("Loaded custom rules from %s", custom_path)
+        except OSError:
+            pass
+
+    return content
