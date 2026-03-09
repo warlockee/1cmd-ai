@@ -1,11 +1,10 @@
 # OneCmd
 
-A more specialized 'OpenClaw' for managing terminals — all from your phone.
+An AI-powered terminal manager — control and automate your machines from Telegram.
 
 Works on **macOS** and **Linux**.
 
 > **One bot per machine.** Each machine needs its own Telegram bot token. Create a separate bot for each machine you want to control (e.g. `@my_macbook_bot`, `@my_server_bot`). Only one onecmd instance can use a given bot token at a time.
->
 
 ## Quick Start
 
@@ -13,92 +12,85 @@ Works on **macOS** and **Linux**.
 curl -fsSL https://raw.githubusercontent.com/warlockee/1cmd-ai/main/setup.sh | bash
 ```
 
-The setup script handles everything: clones the repo, installs dependencies, builds the project, walks you through creating a Telegram bot, and starts onecmd. Works on both macOS and Linux.
+The setup script handles everything: clones the repo, installs dependencies, builds the project, configures your Telegram bot and AI provider, and starts onecmd.
 
 Or clone manually:
 
 ```bash
 git clone https://github.com/warlockee/1cmd-ai.git
-cd onecmd
+cd 1cmd-ai
 ./setup.sh
 ```
 
-## How It Works
+## AI Manager
 
-On **macOS**, onecmd reads terminal window text via the Accessibility API (`AXUIElement`), injects keystrokes via `CGEvent`, and focuses windows using `AXUIElement`. It works with any terminal app — no Screen Recording permission needed.
+The AI manager is what makes OneCmd powerful. It's an LLM-powered agent that monitors, controls, and automates your terminals — so you can manage servers, run deployments, and debug issues all from a Telegram chat.
 
-On **Linux**, onecmd uses tmux: `tmux list-panes` to discover sessions, `tmux capture-pane` to read content, and `tmux send-keys` to inject keystrokes. All sessions you want to control must run inside tmux.
+Send `.mgr` to enter manager mode. Your messages go to the AI agent, which can see and interact with all your terminals. Dot commands (`.list`, `.1`, etc.) still work normally. Send `.exit` to leave manager mode.
 
-In both cases, terminal output is sent as monospace text to Telegram with a refresh button to update on demand.
+### What it can do
 
-## Manual Setup
+- List, read, and send commands to any terminal
+- Execute commands asynchronously and notify you when they finish
+- Queue commands to the same terminal so they don't overlap
+- Auto-detect pending commands at prompts and submit them
+- Follow up on completed commands (results feed back to the LLM)
+- Run repeating background tasks ("watch this terminal until X happens")
+- Detect and recover stuck terminals (Smart Diff — probe, compare before/after)
+- Summarize long conversations to preserve context within token limits
+- Auto-fallback between Gemini and Claude on rate limits
+- Remember things across restarts (persistent memory)
+- Auto-restart on crash (up to 5 retries with backoff)
 
-### Prerequisites
+### Providers
 
-- **macOS:** Xcode Command Line Tools (`xcode-select --install`), `curl`, `sqlite3`
-- **Linux:** `gcc`, `make`, `tmux`, `libcurl-dev`, `libsqlite3-dev`
-- **AI Manager:** Python 3 with `pip install -r mgr/requirements.txt` (or let `setup.sh` handle it)
-
-### Create a Telegram Bot
-
-Each machine needs its own bot. To create one:
-
-1. Open Telegram and message [@BotFather](https://t.me/BotFather)
-2. Send `/newbot` and follow the prompts
-3. Name it something you'll recognize (e.g. "My Server Terminal")
-4. Copy the API token
-
-### Run
+The manager supports **Gemini** (Google) and **Claude** (Anthropic). The provider is selected automatically based on which API key is set. If both are set, Gemini is preferred. Override the model with `ONECMD_MGR_MODEL`.
 
 ```bash
-# Install Python deps for AI manager (skip if you only want terminal control)
-pip install -r mgr/requirements.txt
-
-# Build and run
-make
+# Using Gemini (recommended — fast and free tier available)
 GOOGLE_API_KEY=... ./onecmd --apikey YOUR_BOT_TOKEN
+
+# Using Claude
+ANTHROPIC_API_KEY=sk-... ./onecmd --apikey YOUR_BOT_TOKEN
 ```
 
-### Options
+### Standard Operating Procedure
 
-| Flag | Description |
-|------|-------------|
-| `--apikey <token>` | Telegram bot API token |
-| `--enable-otp` | Enable TOTP authentication (off by default) |
-| `--use-weak-security` | Disable TOTP even if previously configured |
-| `--dbfile <path>` | Custom database path (default: `./mybot.sqlite`) |
-| `--dangerously-attach-to-any-window` | Show all windows, not just terminals (macOS only) |
-| `--mgr <path>` | Path to the manager agent script (auto-detected if `mgr/main.py` exists) |
+On first run, the manager generates `.onecmd/agent_sop.md` — a Standard Operating Procedure that guides the AI on stuck terminal detection and recovery. You can edit this file to customize the agent's behavior.
 
-## Usage
+### Manager commands
 
-Message your bot on Telegram:
+| Command | Action |
+|---------|--------|
+| `.mgr` | Enter AI manager mode (auto-enabled when `mgr/main.py` exists) |
+| `.exit` | Leave manager mode |
+| `.health` | Manager health report (uptime, memory, stats) |
+
+### onecmd-ctl
+
+`onecmd-ctl` is a standalone CLI tool used by the manager agent. You can also use it directly:
+
+```bash
+onecmd-ctl list                    # List terminals as JSON
+onecmd-ctl capture <terminal_id>   # Capture visible text from a terminal
+onecmd-ctl send <terminal_id> <keys>  # Send keystrokes to a terminal
+onecmd-ctl status <terminal_id>    # Check if a terminal is alive
+```
+
+Terminal IDs come from the `list` output (e.g. `12399` on macOS, `%0` on tmux).
+
+## Manual Mode
+
+Manual mode is always available as a stable, reliable fallback. It works without any AI provider — just you and your terminals over Telegram. No API keys, no token limits, no network dependencies beyond Telegram itself. When the AI is down or you need direct control, manual mode is always there.
+
+In manual mode, any text you send is typed directly into the connected terminal as keystrokes.
 
 | Command | Action |
 |---------|--------|
 | `.list` | List available terminal sessions |
 | `.1` `.2` ... | Connect to a session by number |
-| `.help` | Show help |
-| `.mgr` | Toggle AI manager mode (auto-enabled when `mgr/main.py` exists) |
-| `.exit` | Leave manager mode |
-| `.health` | Manager health report (uptime, memory, stats) |
-| `.otptimeout <seconds>` | Set TOTP session timeout |
-| Any other text | Sent as keystrokes to the connected terminal (or to the manager in manager mode) |
-
-### Linux: tmux requirement
-
-On Linux, onecmd controls tmux sessions. Make sure your work is running inside tmux:
-
-```bash
-# Start a named session
-tmux new -s dev
-
-# Or start detached sessions
-tmux new -s server1 -d
-tmux new -s server2 -d
-```
-
-Then run onecmd separately (outside tmux or in its own tmux window) and use `.list` to see your sessions.
+| `.help` | Show all commands |
+| Any other text | Sent as keystrokes to the connected terminal |
 
 ### Keystroke Modifiers
 
@@ -117,62 +109,52 @@ Prefix your message with an emoji to add a modifier key:
 
 `\n` for Enter, `\t` for Tab, `\\` for literal backslash.
 
-## AI Manager Agent
+## How It Works
 
-The manager is an LLM-powered agent that can autonomously monitor and control your terminals. It supports **Claude** (Anthropic) and **Gemini** (Google) as providers. The manager is auto-detected when `mgr/main.py` exists in the working directory — no `--mgr` flag needed:
+On **macOS**, onecmd reads terminal window text via the Accessibility API (`AXUIElement`), injects keystrokes via `CGEvent`, and focuses windows using `AXUIElement`. It works with any terminal app — no Screen Recording permission needed.
 
-```bash
-# Using Gemini (default when both keys are set)
-GOOGLE_API_KEY=... ./onecmd --apikey YOUR_BOT_TOKEN
+On **Linux**, onecmd uses tmux: `tmux list-panes` to discover sessions, `tmux capture-pane` to read content, and `tmux send-keys` to inject keystrokes. All sessions you want to control must run inside tmux.
 
-# Using Claude
-ANTHROPIC_API_KEY=sk-... ./onecmd --apikey YOUR_BOT_TOKEN
-```
+In both cases, terminal output is sent as monospace text to Telegram with a refresh button to update on demand.
 
-The provider is selected automatically based on which API key is set. If both are set, Gemini is preferred. Override the model with `ONECMD_MGR_MODEL`. Both `--apikey` and an LLM API key are validated at startup — onecmd shows a clear error and exits if either is missing.
+### Linux: tmux requirement
 
-Then send `.mgr` in Telegram to enter manager mode. In manager mode, your messages go to the AI agent instead of being sent as keystrokes. Dot commands (`.list`, `.1`, etc.) still work normally.
-
-The manager can:
-- List, read, and send commands to any terminal
-- Execute commands asynchronously and notify you when they finish
-- Queue commands to the same terminal so they don't overlap
-- Auto-detect pending commands at prompts and submit them
-- Follow up on completed commands (results feed back to the LLM)
-- Run repeating background tasks ("watch this terminal until X happens")
-- Detect and recover stuck terminals (Smart Diff — probe, compare before/after)
-- Summarize long conversations to preserve context within token limits
-- Auto-fallback between Gemini and Claude on rate limits
-- Remember things across restarts (persistent memory)
-- Auto-restart on crash (up to 5 retries with backoff)
-
-On first run, the manager generates `.onecmd/agent_sop.md` — a Standard Operating Procedure that guides the AI on stuck terminal detection and recovery. You can edit this file to customize the agent's behavior.
-
-Send `.exit` to leave manager mode, or `.health` for a status report.
-
-### onecmd-ctl
-
-`onecmd-ctl` is a standalone CLI tool used by the manager agent. You can also use it directly:
+On Linux, onecmd controls tmux sessions. Make sure your work is running inside tmux:
 
 ```bash
-onecmd-ctl list                    # List terminals as JSON
-onecmd-ctl capture <terminal_id>   # Capture visible text from a terminal
-onecmd-ctl send <terminal_id> <keys>  # Send keystrokes to a terminal
-onecmd-ctl status <terminal_id>    # Check if a terminal is alive
+# Start a named session
+tmux new -s dev
+
+# Or start detached sessions
+tmux new -s server1 -d
+tmux new -s server2 -d
 ```
 
-Terminal IDs come from the `list` output (e.g. `12399` on macOS, `%0` on tmux).
+Then run onecmd separately (outside tmux or in its own tmux window) and use `.list` to see your sessions.
 
-## Environment Variables
+## Configuration
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--apikey <token>` | Telegram bot API token |
+| `--enable-otp` | Enable TOTP authentication (off by default) |
+| `--use-weak-security` | Disable TOTP even if previously configured |
+| `--dbfile <path>` | Custom database path (default: `./mybot.sqlite`) |
+| `--dangerously-attach-to-any-window` | Show all windows, not just terminals (macOS only) |
+| `--mgr <path>` | Path to the manager agent script (auto-detected if `mgr/main.py` exists) |
+
+### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `GOOGLE_API_KEY` | (none) | Google API key for the AI manager (Gemini) |
+| `ANTHROPIC_API_KEY` | (none) | Anthropic API key for the AI manager (Claude) |
+| `ONECMD_MGR_MODEL` | `gemini-3-flash-preview` / `claude-opus-4-6` | LLM model for the manager (default depends on provider) |
 | `ONECMD_VISIBLE_LINES` | `40` | Number of terminal lines to include in output |
 | `ONECMD_SPLIT_MESSAGES` | off | Set to `1` to split long output across multiple messages |
 | `ONECMD_CTL` | `./onecmd-ctl` | Path to the onecmd-ctl binary (used by manager) |
-| `ONECMD_MGR_MODEL` | `gemini-3-flash-preview` / `claude-opus-4-6` | LLM model for the manager agent (default depends on provider) |
-| `ANTHROPIC_API_KEY` | (none) | Anthropic API key for the manager agent (Claude) |
-| `GOOGLE_API_KEY` | (none) | Google API key for the manager agent (Gemini) |
 
 Terminal output is sent as a single message by default. Each new command or refresh **deletes the previous output messages** and sends fresh ones, creating a clean "live terminal" view rather than spamming the chat.
 
@@ -180,6 +162,25 @@ If your terminal produces very long output (e.g. build logs) and you want to see
 
 ```bash
 ONECMD_SPLIT_MESSAGES=1 ./onecmd
+```
+
+### Prerequisites
+
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`), `curl`, `sqlite3`
+- **Linux:** `gcc`, `make`, `tmux`, `libcurl-dev`, `libsqlite3-dev`
+- **AI Manager:** Python 3 with `pip install -r mgr/requirements.txt` (or let `setup.sh` handle it)
+
+### Manual Run
+
+```bash
+# Build
+make
+
+# Run with AI manager
+GOOGLE_API_KEY=... ./onecmd --apikey YOUR_BOT_TOKEN
+
+# Run without AI manager (manual mode only)
+./onecmd --apikey YOUR_BOT_TOKEN
 ```
 
 ## Security
