@@ -1,0 +1,494 @@
+"""
+onecmd.manager.llm — LLM provider abstraction for Anthropic and Gemini.
+
+Calling spec:
+  Inputs:  messages (list[dict]), tools (list[dict]), system prompt (str),
+           model (str), max_tokens (int)
+  Outputs: (content, text_parts, tool_uses, stop_reason)
+           content:     list[dict] — serialized blocks for conversation history
+           text_parts:  list[str]  — non-thought text from response
+           tool_uses:   list[ToolUse] — (id, name, args) tuples
+           stop_reason: "end_turn" | "tool_use" | None
+  Side effects: HTTP calls to Claude/Gemini API
+
+Provider registry:
+  PROVIDERS = {"anthropic": AnthropicProvider, "google": GeminiProvider}
+
+Detection: checks env vars ANTHROPIC_API_KEY, GOOGLE_API_KEY
+Preference: Gemini if both available (matches existing behavior)
+Fallback: switches to secondary provider on rate limit (5-minute cooldown)
+"""
+from __future__ import annotations
+
+import logging
+import os
+import time
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Normalised response types
+# ---------------------------------------------------------------------------
+# tool_use: (id, name, args)  — id is str for Anthropic, generated for Gemini
+# text: plain string
+
+ToolUse = tuple[str, str, dict[str, Any]]  # (id, name, args)
+
+
+# ---------------------------------------------------------------------------
+# Provider base
+# ---------------------------------------------------------------------------
+
+class _Provider:
+    """Minimal provider interface — subclasses implement chat()."""
+
+    name: str
+
+    def chat(
+        self,
+        model: str,
+        system: str,
+        tools: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+    ) -> tuple[list[dict[str, Any]], list[str], list[ToolUse], str | None]:
+        raise NotImplementedError
+
+    def format_tool_results(
+        self,
+        results: list[tuple[str, str, str]],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def convert_conversation(
+        self,
+        conv: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Clean conversation history for this provider. Default: no-op."""
+        return conv
+
+
+# ---------------------------------------------------------------------------
+# Anthropic provider
+# ---------------------------------------------------------------------------
+
+class AnthropicProvider(_Provider):
+    name = "anthropic"
+
+    def __init__(self) -> None:
+        import anthropic
+        self._client = anthropic.Anthropic()
+
+    def chat(
+        self,
+        model: str,
+        system: str,
+        tools: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+    ) -> tuple[list[dict[str, Any]], list[str], list[ToolUse], str | None]:
+        response = self._client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            tools=tools,
+            messages=messages,
+        )
+
+        serialized: list[dict[str, Any]] = []
+        text_parts: list[str] = []
+        tool_uses: list[ToolUse] = []
+
+        for block in response.content:
+            if block.type == "text":
+                serialized.append({"type": "text", "text": block.text})
+                text_parts.append(block.text)
+            elif block.type == "tool_use":
+                serialized.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                })
+                tool_uses.append((block.id, block.name, block.input))
+
+        stop = "tool_use" if tool_uses else "end_turn"
+        return serialized, text_parts, tool_uses, stop
+
+    def format_tool_results(
+        self,
+        results: list[tuple[str, str, str]],
+    ) -> dict[str, Any]:
+        """Format tool results as an Anthropic user message.
+
+        results: list of (tool_use_id, tool_name, result_text) tuples.
+        tool_name is ignored for Anthropic (uses tool_use_id only).
+        """
+        return {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": tid, "content": text}
+                for tid, _, text in results
+            ],
+        }
+
+    def convert_conversation(
+        self,
+        conv: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Strip Gemini-specific fields (thought blocks, thought_signature)."""
+        id_to_name: dict[str, str] = {}
+        for msg in conv:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    id_to_name[block.get("id", "")] = block.get("name", "unknown")
+
+        to_remove: list[int] = []
+        for idx, msg in enumerate(conv):
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            cleaned: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type", "")
+                if btype == "text":
+                    if block.get("thought"):
+                        continue
+                    cleaned.append({"type": "text", "text": block["text"]})
+                elif btype == "tool_use":
+                    cleaned.append({
+                        "type": "tool_use",
+                        "id": block["id"],
+                        "name": block["name"],
+                        "input": block.get("input", {}),
+                    })
+                elif btype == "tool_result":
+                    cleaned.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.get("tool_use_id", ""),
+                        "content": block.get("content", ""),
+                    })
+                else:
+                    cleaned.append(block)
+            if cleaned:
+                msg["content"] = cleaned
+            else:
+                to_remove.append(idx)
+
+        for idx in reversed(to_remove):
+            conv.pop(idx)
+        return conv
+
+
+# ---------------------------------------------------------------------------
+# Gemini provider
+# ---------------------------------------------------------------------------
+
+class GeminiProvider(_Provider):
+    name = "google"
+
+    def __init__(self) -> None:
+        from google import genai
+        self._client = genai.Client()
+
+    def chat(
+        self,
+        model: str,
+        system: str,
+        tools: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+    ) -> tuple[list[dict[str, Any]], list[str], list[ToolUse], str | None]:
+        from google.genai import types
+
+        gemini_tools = _to_gemini_tools(tools)
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            tools=gemini_tools,
+            max_output_tokens=max_tokens,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True,
+            ),
+        )
+        contents = _to_gemini_contents(messages)
+
+        response = self._client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+
+        serialized: list[dict[str, Any]] = []
+        text_parts: list[str] = []
+        tool_uses: list[ToolUse] = []
+
+        if response.candidates and response.candidates[0].content:
+            for part in response.candidates[0].content.parts:
+                thought_sig = (
+                    getattr(part, "thought_signature", None)
+                    or getattr(part, "thoughtSignature", None)
+                )
+                if thought_sig is not None and isinstance(
+                    thought_sig, (bytes, bytearray)
+                ):
+                    thought_sig = thought_sig.hex() or None
+                is_thought = getattr(part, "thought", None)
+
+                if part.text is not None:
+                    entry: dict[str, Any] = {"type": "text", "text": part.text}
+                    if thought_sig:
+                        entry["thought_signature"] = thought_sig
+                    if is_thought:
+                        entry["thought"] = True
+                    serialized.append(entry)
+                    if not is_thought:
+                        text_parts.append(part.text)
+                elif part.function_call is not None:
+                    fc = part.function_call
+                    tool_id = f"gemini_{fc.name}_{id(fc)}"
+                    args = dict(fc.args) if fc.args else {}
+                    entry = {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": fc.name,
+                        "input": args,
+                    }
+                    if thought_sig:
+                        entry["thought_signature"] = thought_sig
+                    serialized.append(entry)
+                    tool_uses.append((tool_id, fc.name, args))
+
+        stop = "tool_use" if tool_uses else "end_turn"
+        return serialized, text_parts, tool_uses, stop
+
+    def format_tool_results(
+        self,
+        results: list[tuple[str, str, str]],
+    ) -> dict[str, Any]:
+        """Format tool results as a Gemini-compatible message.
+
+        results: list of (tool_use_id, tool_name, result_text) tuples.
+        """
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tid,
+                    "tool_name": name,
+                    "content": text,
+                }
+                for tid, name, text in results
+            ],
+        }
+
+    def convert_conversation(
+        self,
+        conv: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Ensure tool_result blocks have tool_name (needed for Gemini)."""
+        id_to_name: dict[str, str] = {}
+        for msg in conv:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    id_to_name[block.get("id", "")] = block.get("name", "unknown")
+
+        for msg in conv:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            cleaned: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_result" and not block.get("tool_name"):
+                    new_block = dict(block)
+                    tid = block.get("tool_use_id", "")
+                    new_block["tool_name"] = id_to_name.get(tid, "unknown")
+                    cleaned.append(new_block)
+                else:
+                    cleaned.append(block)
+            msg["content"] = cleaned
+        return conv
+
+
+# ---------------------------------------------------------------------------
+# Gemini format helpers
+# ---------------------------------------------------------------------------
+
+def _to_gemini_tools(tools: list[dict[str, Any]]) -> list[Any]:
+    """Convert Anthropic-style tool defs to Gemini function_declarations."""
+    from google.genai import types
+
+    declarations = []
+    for tool in tools:
+        schema = tool.get("input_schema", {})
+        declarations.append({
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": schema,
+        })
+    return [types.Tool(function_declarations=declarations)]
+
+
+def _to_gemini_contents(messages: list[dict[str, Any]]) -> list[Any]:
+    """Convert Anthropic-style messages to Gemini contents format."""
+    from google.genai import types
+
+    contents: list[Any] = []
+    for msg in messages:
+        role = msg["role"]
+        gemini_role = "model" if role == "assistant" else "user"
+        raw_content = msg.get("content", "")
+
+        if isinstance(raw_content, str):
+            contents.append(
+                types.Content(
+                    role=gemini_role,
+                    parts=[types.Part.from_text(text=raw_content)],
+                )
+            )
+        elif isinstance(raw_content, list):
+            parts: list[Any] = []
+            for block in raw_content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type", "")
+                if btype == "text":
+                    part = types.Part(text=block["text"])
+                    if block.get("thought"):
+                        part.thought = True
+                    if block.get("thought_signature"):
+                        sig = block["thought_signature"]
+                        if isinstance(sig, str):
+                            sig = bytes.fromhex(sig)
+                        part.thought_signature = sig
+                    parts.append(part)
+                elif btype == "tool_use":
+                    part = types.Part.from_function_call(
+                        name=block["name"],
+                        args=block.get("input", {}),
+                    )
+                    if block.get("thought_signature"):
+                        sig = block["thought_signature"]
+                        if isinstance(sig, str):
+                            sig = bytes.fromhex(sig)
+                        part.thought_signature = sig
+                    parts.append(part)
+                elif btype == "tool_result":
+                    result_text = block.get("content", "")
+                    tool_name = block.get("tool_name") or _find_tool_name(
+                        contents, block.get("tool_use_id", "")
+                    )
+                    parts.append(
+                        types.Part.from_function_response(
+                            name=tool_name,
+                            response={"result": result_text},
+                        )
+                    )
+            if parts:
+                contents.append(types.Content(role=gemini_role, parts=parts))
+    return contents
+
+
+def _find_tool_name(contents: list[Any], tool_use_id: str) -> str:
+    """Find the tool name for a given tool_use_id by searching previous contents."""
+    for content in reversed(contents):
+        if content.role == "model":
+            for part in content.parts:
+                if part.function_call is not None:
+                    if tool_use_id.startswith(f"gemini_{part.function_call.name}_"):
+                        return part.function_call.name
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Provider registry + detection + fallback
+# ---------------------------------------------------------------------------
+
+PROVIDERS: dict[str, type[_Provider]] = {
+    "anthropic": AnthropicProvider,
+    "google": GeminiProvider,
+}
+
+_RATE_LIMIT_COOLDOWN = 300  # 5 minutes
+
+
+def detect_provider() -> str | None:
+    """Return the preferred provider key, or None if no API keys found.
+
+    Preference: Gemini if both available (matches existing behavior).
+    """
+    has_google = bool(os.environ.get("GOOGLE_API_KEY"))
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if has_google:
+        return "google"
+    if has_anthropic:
+        return "anthropic"
+    return None
+
+
+class ProviderManager:
+    """Manages active provider with automatic fallback on rate limit."""
+
+    def __init__(self, primary: str | None = None) -> None:
+        self._primary_key = primary or detect_provider()
+        if not self._primary_key:
+            raise RuntimeError(
+                "No LLM API key found. Set ANTHROPIC_API_KEY or GOOGLE_API_KEY."
+            )
+        self._providers: dict[str, _Provider] = {}
+        self._active_key: str = self._primary_key
+        self._cooldown_until: float = 0.0
+        self._fallback_key: str | None = self._detect_fallback()
+
+    def _detect_fallback(self) -> str | None:
+        """Return the secondary provider key, if available."""
+        for key in PROVIDERS:
+            if key == self._primary_key:
+                continue
+            env_var = "ANTHROPIC_API_KEY" if key == "anthropic" else "GOOGLE_API_KEY"
+            if os.environ.get(env_var):
+                return key
+        return None
+
+    @property
+    def active(self) -> _Provider:
+        """Return the active provider instance (lazy-initialized)."""
+        if time.time() > self._cooldown_until and self._active_key != self._primary_key:
+            logger.info("Cooldown expired, switching back to %s", self._primary_key)
+            self._active_key = self._primary_key
+        if self._active_key not in self._providers:
+            logger.info("Initializing %s provider", self._active_key)
+            self._providers[self._active_key] = PROVIDERS[self._active_key]()
+        return self._providers[self._active_key]
+
+    @property
+    def active_name(self) -> str:
+        return self._active_key
+
+    def switch_on_rate_limit(self) -> bool:
+        """Switch to fallback provider. Returns True if fallback available."""
+        if not self._fallback_key:
+            logger.warning("Rate limited but no fallback provider available")
+            return False
+        logger.warning(
+            "Rate limited on %s, switching to %s for %ds",
+            self._active_key,
+            self._fallback_key,
+            _RATE_LIMIT_COOLDOWN,
+        )
+        self._active_key = self._fallback_key
+        self._cooldown_until = time.time() + _RATE_LIMIT_COOLDOWN
+        if self._active_key not in self._providers:
+            self._providers[self._active_key] = PROVIDERS[self._active_key]()
+        return True

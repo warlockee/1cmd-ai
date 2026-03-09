@@ -1,11 +1,29 @@
-onecmd
-onecmd-ctl
-*.o
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+
+# Data
 *.sqlite
-mgr/.venv/
+memory.sqlite
+
+# Secrets
 apikey.txt
 .env
-__pycache__/
-run.sh
-.omc/
+
+# Runtime
 .onecmd/
+.omc/
+.onecmd.pid
+run.sh
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

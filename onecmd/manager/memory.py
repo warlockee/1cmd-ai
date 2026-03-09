@@ -1,0 +1,99 @@
+"""
+onecmd.manager.memory — Long-term memory (SQLite).
+
+Calling spec:
+  Inputs:  chat_id, content, category
+  Outputs: memory list or bool
+  Side effects: SQLite read/write to memory.sqlite
+
+Operations: save, delete, list_for_chat
+Limit: 100 memories per chat (oldest pruned)
+Categories: rule, knowledge, preference
+Thread-safe: threading.Lock around all DB operations
+Parameterized queries only
+"""
+from __future__ import annotations
+
+import os
+import sqlite3
+import threading
+import time
+
+_DB_PATH: str = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "memory.sqlite"
+)
+_lock = threading.Lock()
+_MAX: int = 100
+
+
+def _connect() -> sqlite3.Connection:
+    """Open DB and ensure schema exists."""
+    conn = sqlite3.connect(_DB_PATH)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memories ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  chat_id INTEGER NOT NULL,"
+        "  content TEXT NOT NULL,"
+        "  category TEXT NOT NULL DEFAULT 'general',"
+        "  created_at REAL NOT NULL,"
+        "  updated_at REAL NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mem_chat ON memories(chat_id)"
+    )
+    conn.commit()
+    return conn
+
+
+def list_for_chat(chat_id: int) -> list[tuple[int, str, str]]:
+    """Return all memories for *chat_id* as [(id, content, category), ...]."""
+    with _lock:
+        conn = _connect()
+        try:
+            return conn.execute(
+                "SELECT id, content, category FROM memories "
+                "WHERE chat_id = ? ORDER BY id",
+                (chat_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+
+def save(chat_id: int, content: str, category: str = "general") -> int | None:
+    """Insert a memory and prune oldest beyond the per-chat cap. Returns row id."""
+    now = time.time()
+    with _lock:
+        conn = _connect()
+        try:
+            cur = conn.execute(
+                "INSERT INTO memories "
+                "(chat_id, content, category, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (chat_id, content, category, now, now),
+            )
+            conn.execute(
+                "DELETE FROM memories WHERE chat_id = ? AND id NOT IN "
+                "(SELECT id FROM memories WHERE chat_id = ? "
+                "ORDER BY id DESC LIMIT ?)",
+                (chat_id, chat_id, _MAX),
+            )
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+
+def delete(chat_id: int, memory_id: int) -> bool:
+    """Delete a memory by id (scoped to *chat_id*). Returns True if removed."""
+    with _lock:
+        conn = _connect()
+        try:
+            cur = conn.execute(
+                "DELETE FROM memories WHERE id = ? AND chat_id = ?",
+                (memory_id, chat_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()

@@ -17,7 +17,7 @@ err()   { echo -e "${RED}=>${NC} $1"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 
 # Auto-clone if running via curl (not inside the repo)
-if [ ! -f "$SCRIPT_DIR/Makefile" ]; then
+if [ ! -f "$SCRIPT_DIR/pyproject.toml" ]; then
     info "Cloning onecmd..."
     git clone https://github.com/warlockee/1cmd-ai.git
     cd 1cmd-ai
@@ -38,74 +38,53 @@ echo ""
 
 OS="$(uname)"
 
-if [[ "$OS" == "Darwin" ]]; then
-    # Step 1: Check Xcode CLI tools
-    info "Checking for Xcode Command Line Tools..."
-    if ! xcode-select -p &>/dev/null; then
-        warn "Xcode Command Line Tools not found. Installing..."
-        xcode-select --install
-        echo ""
-        echo "Please complete the installation dialog, then re-run this script."
-        exit 1
-    fi
-    ok "Xcode Command Line Tools found."
-elif [[ "$OS" == "Linux" ]]; then
-    # Step 1: Check Linux dependencies
-    info "Checking Linux build dependencies..."
-    MISSING=""
-    command -v gcc &>/dev/null || MISSING="$MISSING gcc"
-    command -v make &>/dev/null || MISSING="$MISSING make"
-    command -v curl &>/dev/null || MISSING="$MISSING curl"
-    command -v tmux &>/dev/null || MISSING="$MISSING tmux"
-    command -v pkg-config &>/dev/null || MISSING="$MISSING pkg-config"
-    pkg-config --exists libcurl 2>/dev/null || MISSING="$MISSING libcurl-dev"
-    pkg-config --exists sqlite3 2>/dev/null || MISSING="$MISSING libsqlite3-dev"
+# Step 1: Check Python 3.11+
+info "Checking Python..."
+if ! command -v python3 &>/dev/null; then
+    err "python3 not found. Please install Python 3.11 or later."
+    exit 1
+fi
 
-    if [ -n "$MISSING" ]; then
-        warn "Missing packages:$MISSING"
-        info "Installing..."
+PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
+PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
+
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
+    err "Python 3.11+ required (found $PY_VERSION)."
+    exit 1
+fi
+ok "Python $PY_VERSION found."
+
+# Step 2: Platform-specific checks
+if [[ "$OS" == "Linux" ]]; then
+    if ! command -v tmux &>/dev/null; then
+        warn "tmux not found. Installing..."
         if command -v apt-get &>/dev/null; then
-            # Map package names for apt
-            PKGS=""
-            [[ " $MISSING " == *" gcc "* || " $MISSING " == *" make "* ]] && PKGS="$PKGS build-essential"
-            [[ " $MISSING " == *" curl "* ]] && PKGS="$PKGS curl"
-            [[ " $MISSING " == *" tmux "* ]] && PKGS="$PKGS tmux"
-            [[ " $MISSING " == *" pkg-config "* ]] && PKGS="$PKGS pkg-config"
-            [[ " $MISSING " == *" libcurl-dev "* ]] && PKGS="$PKGS libcurl4-openssl-dev"
-            [[ " $MISSING " == *" libsqlite3-dev "* ]] && PKGS="$PKGS libsqlite3-dev"
-            sudo apt-get update -qq && sudo apt-get install -y $PKGS
+            sudo apt-get update -qq && sudo apt-get install -y tmux
         elif command -v yum &>/dev/null; then
-            PKGS=""
-            [[ " $MISSING " == *" gcc "* ]] && PKGS="$PKGS gcc"
-            [[ " $MISSING " == *" make "* ]] && PKGS="$PKGS make"
-            [[ " $MISSING " == *" curl "* ]] && PKGS="$PKGS curl"
-            [[ " $MISSING " == *" tmux "* ]] && PKGS="$PKGS tmux"
-            [[ " $MISSING " == *" pkg-config "* ]] && PKGS="$PKGS pkgconf-pkg-config"
-            [[ " $MISSING " == *" libcurl-dev "* ]] && PKGS="$PKGS libcurl-devel"
-            [[ " $MISSING " == *" libsqlite3-dev "* ]] && PKGS="$PKGS sqlite-devel"
-            sudo yum install -y $PKGS
+            sudo yum install -y tmux
         else
-            err "Please install:$MISSING"
+            err "Please install tmux manually."
             exit 1
         fi
     fi
-    ok "Build dependencies found."
-else
-    err "Unsupported OS: $OS"
-    exit 1
+    ok "tmux found."
+elif [[ "$OS" == "Darwin" ]]; then
+    info "macOS detected. Accessibility permission may be required."
 fi
 
-# Step 2: Build
-info "Building onecmd..."
-make clean -s 2>/dev/null || true
-if make -s; then
-    ok "Build successful."
-else
-    err "Build failed. Check errors above."
-    exit 1
-fi
+# Step 3: Create venv and install
+info "Setting up Python environment..."
+python3 -m venv .venv
 
-# Step 3: API key setup
+if [[ "$OS" == "Darwin" ]]; then
+    .venv/bin/pip install -q ".[macos,dev]"
+else
+    .venv/bin/pip install -q ".[dev]"
+fi
+ok "Dependencies installed."
+
+# Step 4: API key setup
 echo ""
 if [ -f apikey.txt ]; then
     EXISTING_KEY=$(tr -d '[:space:]' < apikey.txt)
@@ -164,7 +143,7 @@ if [ ! -f apikey.txt ]; then
     fi
 fi
 
-# Step 4: AI Manager setup
+# Step 5: AI Manager setup
 echo ""
 echo -e "${BOLD}AI Manager${NC}"
 echo ""
@@ -191,24 +170,7 @@ if [[ -z "$HAS_LLM" ]]; then
     warn "No API keys provided. AI manager will be unavailable."
 fi
 
-if [[ -n "$HAS_LLM" ]]; then
-    info "Setting up Python environment for AI manager..."
-    if command -v python3 &>/dev/null; then
-        python3 -m venv mgr/.venv 2>/dev/null || true
-        if [ -f mgr/.venv/bin/pip ]; then
-            mgr/.venv/bin/pip install -q -r mgr/requirements.txt
-            ok "AI manager dependencies installed."
-        else
-            warn "Failed to create Python venv. AI manager unavailable."
-            HAS_LLM=""
-        fi
-    else
-        warn "python3 not found. AI manager requires Python 3."
-        HAS_LLM=""
-    fi
-fi
-
-# Step 5: Accessibility permission check (macOS only)
+# Step 6: Accessibility permission check (macOS only)
 if [[ "$OS" == "Darwin" ]]; then
     echo ""
     info "Checking Accessibility permission..."
@@ -224,7 +186,7 @@ if [[ "$OS" == "Darwin" ]]; then
     echo ""
 fi
 
-# Step 6: Create .env and launch script
+# Step 7: Create .env and launch script
 ENV_FILE=".env"
 {
     echo "# OneCmd environment — keep this file private"
@@ -243,12 +205,12 @@ if [ -f .env ]; then
     source .env
     set +a
 fi
-exec ./onecmd "$@"
+exec .venv/bin/onecmd "$@"
 RUNEOF
 chmod +x run.sh
 ok "Created run.sh"
 
-# Step 7: Linux tmux reminder
+# Step 8: Linux tmux reminder
 if [[ "$OS" == "Linux" ]]; then
     echo ""
     echo -e "  ${YELLOW}Important:${NC} On Linux, onecmd controls tmux sessions."
@@ -259,7 +221,7 @@ if [[ "$OS" == "Linux" ]]; then
     echo "    tmux new -s server -d    # start detached"
 fi
 
-# Step 8: Summary
+# Step 9: Summary
 echo ""
 echo -e "${GREEN}${BOLD}Setup complete!${NC}"
 echo ""

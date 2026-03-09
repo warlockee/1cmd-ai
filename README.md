@@ -12,14 +12,16 @@ Works on **macOS** and **Linux**.
 curl -fsSL https://raw.githubusercontent.com/warlockee/1cmd-ai/main/setup.sh | bash
 ```
 
-The setup script handles everything: clones the repo, installs dependencies, builds the project, configures your Telegram bot and AI provider, and starts onecmd.
+The setup script handles everything: clones the repo, installs Python dependencies, configures your Telegram bot and AI provider, and starts onecmd.
 
-Or clone manually:
+Or install manually:
 
 ```bash
 git clone https://github.com/warlockee/1cmd-ai.git
 cd 1cmd-ai
-./setup.sh
+python3 -m venv .venv
+.venv/bin/pip install ".[macos]"   # macOS (or just "." for Linux)
+.venv/bin/onecmd --apikey YOUR_BOT_TOKEN
 ```
 
 ## AI Manager
@@ -41,7 +43,6 @@ Send `.mgr` to enter manager mode. Your messages go to the AI agent, which can s
 - Summarize long conversations to preserve context within token limits
 - Auto-fallback between Gemini and Claude on rate limits
 - Remember things across restarts (persistent memory)
-- Auto-restart on crash (up to 5 retries with backoff)
 
 ### Providers
 
@@ -49,10 +50,10 @@ The manager supports **Gemini** (Google) and **Claude** (Anthropic). The provide
 
 ```bash
 # Using Gemini (recommended — fast and free tier available)
-GOOGLE_API_KEY=... ./onecmd --apikey YOUR_BOT_TOKEN
+GOOGLE_API_KEY=... onecmd --apikey YOUR_BOT_TOKEN
 
 # Using Claude
-ANTHROPIC_API_KEY=sk-... ./onecmd --apikey YOUR_BOT_TOKEN
+ANTHROPIC_API_KEY=sk-... onecmd --apikey YOUR_BOT_TOKEN
 ```
 
 ### Standard Operating Procedure
@@ -73,23 +74,9 @@ Custom rules are appended to the default SOP automatically — no need to edit t
 
 | Command | Action |
 |---------|--------|
-| `.mgr` | Enter AI manager mode (auto-enabled when `mgr/main.py` exists) |
+| `.mgr` | Enter AI manager mode |
 | `.exit` | Leave manager mode |
 | `.health` | Manager health report (uptime, memory, stats) |
-
-### onecmd-ctl
-
-`onecmd-ctl` is a standalone CLI tool used by the manager agent. You can also use it directly:
-
-```bash
-onecmd-ctl list                    # List terminals as JSON
-onecmd-ctl capture <terminal_id>   # Capture visible text from a terminal
-onecmd-ctl send <terminal_id> <keys>  # Send keystrokes to a terminal
-onecmd-ctl status <terminal_id>    # Check if a terminal is alive
-onecmd-ctl rename <terminal_id> <name>  # Set a custom name for a terminal
-```
-
-Terminal IDs come from the `list` output (e.g. `12399` on macOS, `%0` on tmux).
 
 ## Manual Mode
 
@@ -156,7 +143,7 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `--use-weak-security` | Disable TOTP even if previously configured |
 | `--dbfile <path>` | Custom database path (default: `./mybot.sqlite`) |
 | `--dangerously-attach-to-any-window` | Show all windows, not just terminals (macOS only) |
-| `--mgr <path>` | Path to the manager agent script (auto-detected if `mgr/main.py` exists) |
+| `--verbose` | Enable debug logging |
 
 ### Environment Variables
 
@@ -164,36 +151,37 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 |----------|---------|-------------|
 | `GOOGLE_API_KEY` | (none) | Google API key for the AI manager (Gemini) |
 | `ANTHROPIC_API_KEY` | (none) | Anthropic API key for the AI manager (Claude) |
-| `ONECMD_MGR_MODEL` | `gemini-3-flash-preview` / `claude-opus-4-6` | LLM model for the manager (default depends on provider) |
+| `ONECMD_MGR_MODEL` | (auto) | LLM model override |
 | `ONECMD_VISIBLE_LINES` | `40` | Number of terminal lines to include in output |
 | `ONECMD_SPLIT_MESSAGES` | off | Set to `1` to split long output across multiple messages |
-| `ONECMD_CTL` | `./onecmd-ctl` | Path to the onecmd-ctl binary (used by manager) |
 
 Terminal output is sent as a single message by default. Each new command or refresh **deletes the previous output messages** and sends fresh ones, creating a clean "live terminal" view rather than spamming the chat.
 
 If your terminal produces very long output (e.g. build logs) and you want to see all of it, enable splitting:
 
 ```bash
-ONECMD_SPLIT_MESSAGES=1 ./onecmd
+ONECMD_SPLIT_MESSAGES=1 onecmd --apikey YOUR_BOT_TOKEN
 ```
 
 ### Prerequisites
 
-- **macOS:** Xcode Command Line Tools (`xcode-select --install`), `curl`, `sqlite3`
-- **Linux:** `gcc`, `make`, `tmux`, `libcurl-dev`, `libsqlite3-dev`
-- **AI Manager:** Python 3 with `pip install -r mgr/requirements.txt` (or let `setup.sh` handle it)
+- **Python 3.11+**
+- **macOS:** Accessibility permission (prompted on first use)
+- **Linux:** `tmux`
 
 ### Manual Run
 
 ```bash
-# Build
-make
+# Create venv and install
+python3 -m venv .venv
+.venv/bin/pip install ".[macos]"   # macOS
+.venv/bin/pip install .            # Linux
 
 # Run with AI manager
-GOOGLE_API_KEY=... ./onecmd --apikey YOUR_BOT_TOKEN
+GOOGLE_API_KEY=... .venv/bin/onecmd --apikey YOUR_BOT_TOKEN
 
 # Run without AI manager (manual mode only)
-./onecmd --apikey YOUR_BOT_TOKEN
+.venv/bin/onecmd --apikey YOUR_BOT_TOKEN
 ```
 
 ## Security
@@ -217,7 +205,7 @@ GOOGLE_API_KEY=... ./onecmd --apikey YOUR_BOT_TOKEN
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed technical documentation: component design, thread model, data flow, IPC protocol, backend interface, global state, and known limitations.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed technical documentation.
 
 ## License
 
