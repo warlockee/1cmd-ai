@@ -9,3 +9,4 @@ __pycache__/
 run.sh
 .omc/
 .onecmd/
+.onecmd.pid

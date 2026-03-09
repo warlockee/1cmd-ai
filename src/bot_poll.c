@@ -158,13 +158,27 @@ int64_t botProcessUpdates(int64_t offset, int timeout) {
     cJSON *json = cJSON_Parse(body);
     cJSON *result = cJSON_Select(json,".result:a");
     if (result == NULL) goto fmterr;
-    /* Process the array of updates. */
+    /* Process the array of updates.
+     * last_processed_id guards against duplicate processing when the same
+     * update is returned twice (e.g. after a network error resets the offset).
+     * It is persisted to SQLite so restarts also benefit. */
+    static int64_t last_processed_id = -1;
+    if (last_processed_id == -1) {
+        sds stored = kvGet(DbHandle, "last_update_id");
+        last_processed_id = stored ? strtoll(stored, NULL, 10) : 0;
+        sdsfree(stored);
+    }
     cJSON *update;
     cJSON_ArrayForEach(update,result) {
         cJSON *update_id = cJSON_Select(update,".update_id:n");
         if (update_id == NULL) continue;
         int64_t thisoff = (int64_t) update_id->valuedouble;
         if (thisoff > offset) offset = thisoff;
+
+        /* Skip updates we already processed (guards against re-delivery
+         * after network errors that cause getUpdates to return the old
+         * offset). */
+        if (thisoff <= last_processed_id) continue;
 
         /* Check for callback query (button press) first. */
         cJSON *callback = cJSON_Select(update,".callback_query");
@@ -195,6 +209,12 @@ int64_t botProcessUpdates(int64_t offset, int timeout) {
                         freeBotRequest(br);
                     }
                 }
+            }
+            last_processed_id = thisoff;
+            {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%lld", (long long)thisoff);
+                kvSet(DbHandle, "last_update_id", buf, 0);
             }
             continue;
         }
@@ -337,6 +357,13 @@ int64_t botProcessUpdates(int64_t offset, int timeout) {
         if (Bot.verbose)
             printf("Starting thread to serve: \"%s\"\n",br->request);
 
+        last_processed_id = thisoff;
+        {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)thisoff);
+            kvSet(DbHandle, "last_update_id", buf, 0);
+        }
+
         /* It's up to the callback to free the bot request with
          * freeBotRequest(). */
     }
@@ -356,8 +383,11 @@ fmterr:
  * time we unblock, we check for completed requests (by the thread that
  * handles Yahoo Finance API calls). */
 void botMain(void) {
-    int64_t nextid = -100; /* Start getting the last 100 messages. */
-    int previd;
+    /* Resume from last processed update to avoid re-processing on restart. */
+    sds stored_id = kvGet(DbHandle, "last_update_id");
+    int64_t nextid = stored_id ? strtoll(stored_id, NULL, 10) : -100;
+    sdsfree(stored_id);
+    int64_t previd;
 
     printf("Connecting to Telegram...\n");
     fflush(stdout);
