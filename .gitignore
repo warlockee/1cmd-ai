@@ -4,6 +4,7 @@ onecmd-ctl
 *.sqlite
 mgr/.venv/
 apikey.txt
+.env
 __pycache__/
 run.sh
 .omc/
