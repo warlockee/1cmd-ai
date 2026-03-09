@@ -31,6 +31,7 @@ Send `.mgr` to enter manager mode. Your messages go to the AI agent, which can s
 ### What it can do
 
 - List, read, and send commands to any terminal
+- Name terminals for easy identification (proactively suggests names based on content)
 - Execute commands asynchronously and notify you when they finish
 - Queue commands to the same terminal so they don't overlap
 - Auto-detect pending commands at prompts and submit them
@@ -81,7 +82,7 @@ Custom rules are appended to the default SOP automatically — no need to edit t
 `onecmd-ctl` is a standalone CLI tool used by the manager agent. You can also use it directly:
 
 ```bash
-onecmd-ctl list                    # List terminals as JSON (includes aliases)
+onecmd-ctl list                    # List terminals as JSON
 onecmd-ctl capture <terminal_id>   # Capture visible text from a terminal
 onecmd-ctl send <terminal_id> <keys>  # Send keystrokes to a terminal
 onecmd-ctl status <terminal_id>    # Check if a terminal is alive
@@ -100,7 +101,7 @@ In manual mode, any text you send is typed directly into the connected terminal 
 |---------|--------|
 | `.list` | List available terminal sessions |
 | `.1` `.2` ... | Connect to a session by number |
-| `.rename N name` | Name a terminal for easy identification |
+| `.rename <N> <name>` | Name a terminal for easy identification |
 | `.help` | Show all commands |
 | Any other text | Sent as keystrokes to the connected terminal |
 

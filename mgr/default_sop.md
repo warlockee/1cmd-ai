@@ -34,6 +34,31 @@ when managing multiple sessions. Proactively suggest names; don't wait to be ask
 
 ---
 
+## Terminal Type Detection — AI Agent vs Shell
+
+Before sending input to a terminal, identify what's running in it:
+
+**AI agent terminals** — Claude Code, Gemini CLI, Codex CLI, Aider, Cursor agent,
+or any LLM-powered tool with a conversational interface. These accept **natural
+language** instructions. Signs: prompt like `>`, `claude>`, `gemini>`, conversation
+history visible, markdown output, tool use blocks, thinking indicators.
+
+**Shell terminals** — bash, zsh, fish, or any standard command-line shell. These
+require **exact commands**. Signs: `$` or `%` prompt, file paths, command output.
+
+**REPLs and other programs** — Python, Node, database consoles, etc. Use their
+native syntax.
+
+**Rules:**
+- AI agent terminal → send natural language (e.g. "run the tests and fix failures")
+- Shell terminal → send exact commands (e.g. `npm test`)
+- Never send shell commands to an AI agent terminal or vice versa
+- When uncertain, read the terminal content first to identify the environment
+- When naming terminals, include the agent type if applicable (e.g. "claude-dev",
+  "gemini-deploy") to make the distinction obvious
+
+---
+
 ## Stuck Terminal Detection
 
 ## Smart Diff — Detecting Stuck Sessions
