@@ -52,7 +52,13 @@ class ManagerRouter:
         if self._agent is None:
             self._init_agent()
         if self._agent is None:
-            return "Manager unavailable — no LLM API key configured."
+            return (
+                "Manager unavailable — no LLM API key.\n\n"
+                "Set one of these environment variables:\n"
+                "<code>GOOGLE_API_KEY</code> — Gemini (recommended)\n"
+                "<code>ANTHROPIC_API_KEY</code> — Claude\n\n"
+                "Then restart onecmd."
+            )
         self._active = True
         logger.info("Manager mode activated")
         return "Manager mode ON. Send messages to the AI agent. Use .exit to leave."

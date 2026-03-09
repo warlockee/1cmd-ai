@@ -346,7 +346,8 @@ class Agent:
 
                 try:
                     serialized, text_parts, tool_uses, stop = provider.chat(
-                        model, system_prompt, TOOL_SCHEMAS, conv)
+                        model, system_prompt, TOOL_SCHEMAS, conv,
+                        max_tokens=provider.default_max_tokens)
                 except Exception as api_err:
                     if _is_rate_limit_error(api_err):
                         if self._providers.switch_on_rate_limit():
@@ -359,7 +360,7 @@ class Agent:
                                 f"Switched to {prev_name} (rate limit).")
                             serialized, text_parts, tool_uses, stop = \
                                 provider.chat(model, system_prompt,
-                                              TOOL_SCHEMAS, conv)
+                                              TOOL_SCHEMAS, conv, max_tokens=8192)
                         else:
                             raise
                     else:

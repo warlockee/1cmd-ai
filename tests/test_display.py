@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -199,33 +199,36 @@ class TestTrackedMessages:
 
 
 class TestDeleteTrackedMessages:
-    def test_calls_delete_for_each_id(self):
+    @pytest.mark.asyncio
+    async def test_calls_delete_for_each_id(self):
         tm = TrackedMessages()
         tm.add(10)
         tm.add(20)
         tm.add(30)
 
         bot = MagicMock()
-        with patch("onecmd.terminal.display.delete_message") as mock_del:
-            delete_tracked_messages(bot, 999, tm)
+        with patch("onecmd.terminal.display.delete_message", new_callable=AsyncMock) as mock_del:
+            await delete_tracked_messages(bot, 999, tm)
             # Called in reverse order.
             mock_del.assert_has_calls(
                 [call(bot, 999, 30), call(bot, 999, 20), call(bot, 999, 10)]
             )
 
-    def test_clears_tracked_after_delete(self):
+    @pytest.mark.asyncio
+    async def test_clears_tracked_after_delete(self):
         tm = TrackedMessages()
         tm.add(1)
         bot = MagicMock()
-        with patch("onecmd.terminal.display.delete_message"):
-            delete_tracked_messages(bot, 999, tm)
+        with patch("onecmd.terminal.display.delete_message", new_callable=AsyncMock):
+            await delete_tracked_messages(bot, 999, tm)
         assert tm.count == 0
 
-    def test_empty_tracked_is_noop(self):
+    @pytest.mark.asyncio
+    async def test_empty_tracked_is_noop(self):
         tm = TrackedMessages()
         bot = MagicMock()
-        with patch("onecmd.terminal.display.delete_message") as mock_del:
-            delete_tracked_messages(bot, 999, tm)
+        with patch("onecmd.terminal.display.delete_message", new_callable=AsyncMock) as mock_del:
+            await delete_tracked_messages(bot, 999, tm)
             mock_del.assert_not_called()
 
 
@@ -233,27 +236,29 @@ class TestDeleteTrackedMessages:
 
 
 class TestSendTerminalDisplay:
-    def test_sends_message_and_tracks_id(self):
+    @pytest.mark.asyncio
+    async def test_sends_message_and_tracks_id(self):
         tm = TrackedMessages()
         bot = MagicMock()
 
         with (
-            patch("onecmd.terminal.display.delete_message"),
-            patch("onecmd.terminal.display.send_message", return_value=42),
+            patch("onecmd.terminal.display.delete_message", new_callable=AsyncMock),
+            patch("onecmd.terminal.display.send_message", new_callable=AsyncMock, return_value=42),
         ):
-            send_terminal_display(bot, 123, "hello", tm)
+            await send_terminal_display(bot, 123, "hello", tm)
 
         assert tm.count == 1
         assert tm.pop_all() == [42]
 
-    def test_none_message_id_not_tracked(self):
+    @pytest.mark.asyncio
+    async def test_none_message_id_not_tracked(self):
         tm = TrackedMessages()
         bot = MagicMock()
 
         with (
-            patch("onecmd.terminal.display.delete_message"),
-            patch("onecmd.terminal.display.send_message", return_value=None),
+            patch("onecmd.terminal.display.delete_message", new_callable=AsyncMock),
+            patch("onecmd.terminal.display.send_message", new_callable=AsyncMock, return_value=None),
         ):
-            send_terminal_display(bot, 123, "hello", tm)
+            await send_terminal_display(bot, 123, "hello", tm)
 
         assert tm.count == 0

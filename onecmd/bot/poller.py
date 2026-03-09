@@ -6,7 +6,7 @@ Calling spec:
   Side effects: Telegram long-poll via python-telegram-bot Application
 
 Handlers registered:
-  - CommandHandler("start") -> welcome message
+  - CommandHandler("start") -> handler_callback (for owner registration)
   - MessageHandler(TEXT & ~COMMAND) -> handler_callback
   - CallbackQueryHandler -> handler_callback
 
@@ -48,22 +48,6 @@ HandlerCallback = Callable[
     Coroutine[Any, Any, None],
 ]
 
-WELCOME_TEXT = (
-    "Welcome to 1cmd! Send <b>.help</b> for available commands.\n"
-    "Send <b>.list</b> to see your terminals."
-)
-
-
-async def _start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command with a welcome message."""
-    if update.effective_message is not None:
-        await update.effective_message.reply_text(WELCOME_TEXT, parse_mode="HTML")
-        logger.info(
-            "start command from user_id=%s chat_id=%s",
-            update.effective_user.id if update.effective_user else "unknown",
-            update.effective_chat.id if update.effective_chat else "unknown",
-        )
-
 
 def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
     """Build the Application, register handlers, and start long-polling.
@@ -76,7 +60,7 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
         config: Validated Config with .apikey set.
         handler_callback: Async function(update, context) that processes
             text messages and callback queries. Will be provided by
-            bot/handler.py in Wave 3.
+            bot/handler.py.
     """
     logger.info("Building Telegram bot application...")
 
@@ -86,8 +70,8 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
         .build()
     )
 
-    # /start -> welcome message
-    application.add_handler(CommandHandler("start", _start_command))
+    # /start -> handler_callback (so owner registration + welcome works)
+    application.add_handler(CommandHandler("start", handler_callback))
 
     # Text messages (not commands) -> handler_callback
     application.add_handler(

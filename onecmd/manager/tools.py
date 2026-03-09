@@ -359,6 +359,29 @@ def tool_delete_memory(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     return f"Memory #{memory_id} not found."
 
 
+def tool_list_memories(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """List all saved memories for this chat."""
+    from onecmd.manager import memory
+
+    chat_id: int = ctx["chat_id"]
+    memories = memory.list_for_chat(chat_id)
+    if not memories:
+        return "No memories saved yet. Use save_memory to store something."
+    lines = [f"Memories ({len(memories)}):"]
+    for mid, content, category in memories:
+        lines.append(f"  #{mid} [{category}] {content}")
+    return "\n".join(lines)
+
+
+def tool_read_sop(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Read the current SOP and custom rules."""
+    from onecmd.manager.sop import ensure_sop
+    content = ensure_sop()
+    if not content:
+        return "No SOP configured."
+    return content
+
+
 # ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
@@ -374,6 +397,8 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "cancel_task": tool_cancel_task,
     "save_memory": tool_save_memory,
     "delete_memory": tool_delete_memory,
+    "list_memories": tool_list_memories,
+    "read_sop": tool_read_sop,
 }
 
 
@@ -470,6 +495,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "input_schema": _schema(
          {"memory_id": {"type": "integer", "description": "Memory ID to delete"}},
          ["memory_id"])},
+    {"name": "list_memories",
+     "description": "List all saved memories for this user. Use when the user asks "
+        "'what do you remember', 'show my memories', or 'what's in your memory'.",
+     "input_schema": _schema()},
+    {"name": "read_sop",
+     "description": "Read the current SOP (Standard Operating Procedure) and custom rules. "
+        "Use when the user asks about rules, SOP, configuration, or how you're configured.",
+     "input_schema": _schema()},
 ]
 
 

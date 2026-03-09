@@ -44,6 +44,7 @@ class _Provider:
     """Minimal provider interface — subclasses implement chat()."""
 
     name: str
+    default_max_tokens: int = 65536
 
     def chat(
         self,
@@ -75,6 +76,7 @@ class _Provider:
 
 class AnthropicProvider(_Provider):
     name = "anthropic"
+    default_max_tokens = 64000  # Sonnet/Haiku: 64K, Opus 4.6: 128K
 
     def __init__(self) -> None:
         import anthropic
@@ -192,6 +194,7 @@ class AnthropicProvider(_Provider):
 
 class GeminiProvider(_Provider):
     name = "google"
+    default_max_tokens = 65536  # Gemini 3.x max output
 
     def __init__(self) -> None:
         from google import genai
@@ -228,7 +231,13 @@ class GeminiProvider(_Provider):
         text_parts: list[str] = []
         tool_uses: list[ToolUse] = []
 
-        if response.candidates and response.candidates[0].content:
+        has_parts = (response.candidates
+                     and response.candidates[0].content
+                     and response.candidates[0].content.parts)
+        if not has_parts:
+            reason = getattr(response.candidates[0], "finish_reason", "unknown") if response.candidates else "no_candidates"
+            logger.warning("Gemini returned empty response: %s", reason)
+        if has_parts:
             for part in response.candidates[0].content.parts:
                 thought_sig = (
                     getattr(part, "thought_signature", None)

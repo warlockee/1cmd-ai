@@ -130,14 +130,14 @@ def format_chunks(escaped: str, split: bool) -> list[str]:
     return chunks or ["<pre></pre>"]
 
 
-def delete_tracked_messages(bot: Bot, chat_id: int, tracked_msgs: TrackedMessages) -> None:
+async def delete_tracked_messages(bot: Bot, chat_id: int, tracked_msgs: TrackedMessages) -> None:
     """Delete all tracked messages and clear the list."""
     ids = tracked_msgs.pop_all()
     for msg_id in reversed(ids):
-        delete_message(bot, chat_id, msg_id)
+        await delete_message(bot, chat_id, msg_id)
 
 
-def send_terminal_display(
+async def send_terminal_display(
     bot: Bot,
     chat_id: int,
     text: str,
@@ -150,7 +150,7 @@ def send_terminal_display(
     Deletes previously tracked messages first, then sends new ones.
     The last message includes a refresh inline-keyboard button.
     """
-    delete_tracked_messages(bot, chat_id, tracked_msgs)
+    await delete_tracked_messages(bot, chat_id, tracked_msgs)
 
     tail = last_n_lines(text, visible_lines)
     escaped = html_escape(tail)
@@ -164,6 +164,6 @@ def send_terminal_display(
     for i, chunk in enumerate(chunks):
         is_last = i == len(chunks) - 1
         markup = refresh_markup if is_last else None
-        msg_id = send_message(bot, chat_id, chunk, reply_markup=markup)
+        msg_id = await send_message(bot, chat_id, chunk, reply_markup=markup)
         if msg_id is not None:
             tracked_msgs.add(msg_id)

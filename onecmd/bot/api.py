@@ -62,7 +62,7 @@ def _validate_chat_id(chat_id: int) -> int:
     return chat_id
 
 
-def send_message(
+async def send_message(
     bot: Bot,
     chat_id: int,
     text: str,
@@ -73,7 +73,7 @@ def send_message(
     try:
         _validate_chat_id(chat_id)
         text = _truncate(text)
-        msg = bot.send_message(
+        msg = await bot.send_message(
             chat_id=chat_id,
             text=text,
             parse_mode=parse_mode,
@@ -88,7 +88,7 @@ def send_message(
         return None
 
 
-def edit_message(
+async def edit_message(
     bot: Bot,
     chat_id: int,
     msg_id: int,
@@ -99,7 +99,7 @@ def edit_message(
     try:
         _validate_chat_id(chat_id)
         text = _truncate(text)
-        bot.edit_message_text(
+        await bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
             text=text,
@@ -116,11 +116,11 @@ def edit_message(
         return False
 
 
-def delete_message(bot: Bot, chat_id: int, msg_id: int) -> bool:
+async def delete_message(bot: Bot, chat_id: int, msg_id: int) -> bool:
     """Delete a message. Returns True on success, False on failure."""
     try:
         _validate_chat_id(chat_id)
-        bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
         return True
     except TypeError:
         raise
@@ -131,10 +131,10 @@ def delete_message(bot: Bot, chat_id: int, msg_id: int) -> bool:
         return False
 
 
-def answer_callback(bot: Bot, callback_id: str) -> bool:
+async def answer_callback(bot: Bot, callback_id: str) -> bool:
     """Acknowledge a callback query. Returns True on success, False on failure."""
     try:
-        bot.answer_callback_query(callback_query_id=callback_id)
+        await bot.answer_callback_query(callback_query_id=callback_id)
         return True
     except TelegramError as exc:
         logger.error("answer_callback failed callback_id=%s: %s", callback_id, exc)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -47,12 +47,14 @@ FAKE_TERMINALS = [
 
 @pytest.fixture()
 def bot():
-    """Mock Telegram Bot."""
+    """Mock Telegram Bot with async methods."""
     b = MagicMock()
-    # send_message returns an object with message_id
     msg = MagicMock()
     msg.message_id = 42
-    b.send_message.return_value = msg
+    b.send_message = AsyncMock(return_value=msg)
+    b.edit_message_text = AsyncMock()
+    b.delete_message = AsyncMock()
+    b.answer_callback_query = AsyncMock()
     return b
 
 
@@ -127,8 +129,8 @@ class TestBuildListText:
     @patch("onecmd.bot.handler._load_aliases", return_value={})
     def test_terminals_listed(self, _mock_aliases):
         result = _build_list_text(FAKE_TERMINALS)
-        assert ".1 bash - ~" in result
-        assert ".2 vim - editor" in result
+        assert ".1</code> bash" in result
+        assert ".2</code> vim" in result
 
     @patch("onecmd.bot.handler._load_aliases", return_value={"%0": "myterm"})
     def test_alias_shown(self, _mock_aliases):
