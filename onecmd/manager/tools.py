@@ -33,6 +33,7 @@ class _Backend(Protocol):
     def list(self) -> list[Any]: ...
     def capture(self, term_id: str) -> str | None: ...
     def send_keys(self, term_id: str, text: str) -> bool: ...
+    def create(self) -> str | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +233,24 @@ def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     )
 
 
+def tool_create_terminal(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Open a new terminal window/pane."""
+    backend: _Backend = ctx["backend"]
+    result = backend.create()
+    if result is None:
+        return "Failed to create terminal."
+    # Wait for the OS to register the new window before listing
+    time.sleep(1.0)
+    terminals = backend.list()
+    aliases = _read_aliases()
+    lines = [f"New terminal created. {len(terminals)} terminal(s) now available:"]
+    for i, t in enumerate(terminals):
+        alias = aliases.get(str(t.id), "")
+        alias_str = f" ({alias})" if alias else ""
+        lines.append(f"Terminal {i}{alias_str} [{t.id}]: {t.name}")
+    return "\n".join(lines)
+
+
 def tool_rename_terminal(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Set a custom alias for a terminal."""
     tid: str = args["terminal_id"]
@@ -397,6 +416,7 @@ def tool_read_sop(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "list_terminals": tool_list_terminals,
+    "create_terminal": tool_create_terminal,
     "read_terminal": tool_read_terminal,
     "send_command": tool_send_command,
     "rename_terminal": tool_rename_terminal,
@@ -432,6 +452,10 @@ def _schema(props: dict[str, Any] | None = None, required: list[str] | None = No
 TOOL_SCHEMAS: list[dict[str, Any]] = [
     {"name": "list_terminals",
      "description": "List all available terminal sessions with their IDs, names, and titles.",
+     "input_schema": _schema()},
+    {"name": "create_terminal",
+     "description": "Open a new terminal window (macOS) or tmux pane (Linux). "
+        "Returns the updated terminal list after creation.",
      "input_schema": _schema()},
     {"name": "rename_terminal",
      "description": "Give a terminal a custom name for easy identification. "

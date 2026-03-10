@@ -51,6 +51,9 @@ class FakeBackend:
         self.send_calls.append((term_id, text))
         return True
 
+    def create(self) -> str | None:
+        return "%99"
+
     def free_list(self) -> None:
         self._terms = []
 
@@ -174,6 +177,19 @@ class TestTextLengthCap:
         vb = ValidatedBackend(fake)
         vb.list()
         assert vb.send_keys("%0", "x" * 10_000) is True
+
+
+# ---------------------------------------------------------------------------
+# ValidatedBackend: create delegates
+# ---------------------------------------------------------------------------
+
+
+class TestCreate:
+    def test_create_delegates(self) -> None:
+        fake = FakeBackend([FakeTermInfo(id="%0")])
+        vb = ValidatedBackend(fake)
+        result = vb.create()
+        assert result == "%99"
 
 
 # ---------------------------------------------------------------------------

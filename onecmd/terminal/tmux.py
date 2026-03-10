@@ -10,6 +10,7 @@ Sealed operations (deterministic):
   - capture:   tmux capture-pane -t id -p  (trailing blanks stripped, max 64 KB)
   - send:      tmux send-keys -t id [-l] text  (-l for literal, without for special)
   - connected: tmux display-message -t id -p ""  (exit code check)
+  - create:    tmux new-window [-t session] -P -F #{pane_id}  (returns new pane ID)
 
 Guarding:
   - All args via subprocess.run([...], shell=False) — NEVER shell=True
@@ -166,6 +167,22 @@ class TmuxBackend:
         cmd.append(text)
         result = _run(cmd)
         return result is not None
+
+    # ------------------------------------------------------------------
+    # create
+    # ------------------------------------------------------------------
+
+    def create(self) -> str | None:
+        """Create a new tmux window and return the pane ID."""
+        cmd = ["tmux", "new-window"]
+        if self._session_name is not None:
+            cmd += ["-t", self._session_name]
+        cmd += ["-P", "-F", "#{pane_id}"]
+        result = _run(cmd)
+        if result is None:
+            return None
+        pane_id = result.strip()
+        return pane_id if _PANE_ID_RE.match(pane_id) else None
 
     # ------------------------------------------------------------------
     # free_list

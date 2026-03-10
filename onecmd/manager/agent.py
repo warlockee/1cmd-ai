@@ -273,9 +273,6 @@ class Agent:
         # Provider manager handles LLM creation + fallback
         self._providers = ProviderManager(primary=None)
 
-        # SOP loaded once at startup
-        self._sop: str = ensure_sop()
-
         # Per-chat state
         self._conversations: dict[int, list[dict[str, Any]]] = {}
         self._summaries: dict[int, str] = {}
@@ -331,7 +328,8 @@ class Agent:
         # Build system prompt with memories, summary, SOP
         memories = memory.list_for_chat(chat_id)
         chat_summary = self._summaries.get(chat_id)
-        system_prompt = _build_system_prompt(memories, chat_summary, self._sop)
+        sop = ensure_sop()
+        system_prompt = _build_system_prompt(memories, chat_summary, sop)
         if memories:
             logger.info("Loaded %d memories for chat %d", len(memories), chat_id)
 

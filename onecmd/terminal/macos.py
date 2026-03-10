@@ -14,6 +14,7 @@ Methods:
   connected(term_id: str)   -> bool             # window existence check
   capture(term_id: str)     -> str | None       # AXUIElement text extraction
   send_keys(term_id: str, text: str) -> bool    # CGEvent keystroke injection
+  create()                  -> str | None       # AppleScript / open -na new window
   free_list()               -> None             # clear cached list
 
 Guarding:
@@ -83,6 +84,14 @@ def _is_terminal_app(name: str) -> bool:
     """Case-insensitive check whether *name* matches a known terminal app."""
     lower = name.lower()
     return any(app.lower() in lower for app in _TERMINAL_APPS)
+
+
+# AppleScript snippets to open a new window in known terminal apps.
+_CREATE_SCRIPTS: dict[str, str] = {
+    "terminal": 'tell application "Terminal" to do script ""',
+    "iterm2": 'tell application "iTerm2" to create window with default profile',
+    "iterm": 'tell application "iTerm" to create window with default profile',
+}
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +594,42 @@ class MacOSBackend:
             i += 1
 
         return True
+
+    # ---- create -----------------------------------------------------------
+
+    def create(self) -> str | None:
+        """Open a new terminal window.
+
+        Uses AppleScript for Terminal.app / iTerm2.  Falls back to
+        ``open -na <AppName>`` for other terminal emulators.
+        Returns the app name on success, None on failure.
+        """
+        import subprocess as _sp
+
+        # Pick the terminal app from the last list() call.
+        app_name: str | None = None
+        for t in self._terms:
+            if _is_terminal_app(t.name):
+                app_name = t.name
+                break
+        if app_name is None:
+            app_name = "Terminal"
+
+        script = _CREATE_SCRIPTS.get(app_name.lower())
+        try:
+            if script:
+                _sp.run(
+                    ["osascript", "-e", script],
+                    timeout=10, capture_output=True, shell=False,
+                )
+            else:
+                _sp.run(
+                    ["open", "-na", app_name],
+                    timeout=10, capture_output=True, shell=False,
+                )
+            return app_name
+        except (_sp.TimeoutExpired, FileNotFoundError, OSError):
+            return None
 
     # ---- free_list --------------------------------------------------------
 
