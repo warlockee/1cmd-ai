@@ -97,3 +97,53 @@ def delete(chat_id: int, memory_id: int) -> bool:
             return cur.rowcount > 0
         finally:
             conn.close()
+
+
+def list_all() -> list[tuple[int, int, str, str, float]]:
+    """Return all memories as [(id, chat_id, content, category, created_at), ...]."""
+    with _lock:
+        conn = _connect()
+        try:
+            return conn.execute(
+                "SELECT id, chat_id, content, category, created_at "
+                "FROM memories ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+
+
+def delete_by_id(memory_id: int) -> bool:
+    """Delete a memory by id (admin, no chat_id scope). Returns True if removed."""
+    with _lock:
+        conn = _connect()
+        try:
+            cur = conn.execute(
+                "DELETE FROM memories WHERE id = ?", (memory_id,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+
+def update(memory_id: int, content: str, category: str | None = None) -> bool:
+    """Update a memory's content (and optionally category). Returns True if updated."""
+    with _lock:
+        conn = _connect()
+        try:
+            if category is not None:
+                cur = conn.execute(
+                    "UPDATE memories SET content = ?, category = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (content, category, time.time(), memory_id),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE memories SET content = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (content, time.time(), memory_id),
+                )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()

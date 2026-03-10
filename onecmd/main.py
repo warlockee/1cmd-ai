@@ -99,9 +99,30 @@ def main() -> None:
     # 9. Create the message handler (dispatches commands, enforces auth).
     handler = create_handler(config, store, backend)
 
+    # 9a. Start admin panel (if --admin-port is set).
+    if config.admin_port:
+        try:
+            from onecmd.admin.server import create_app, start_admin
+            admin_app = create_app(backend, config, store, router=None)
+            start_admin(admin_app, port=config.admin_port)
+            log.info("Admin panel: http://0.0.0.0:%d", config.admin_port)
+        except Exception as exc:
+            log.error("Failed to start admin panel: %s", exc, exc_info=True)
+
     # 10. Start Telegram long-polling (blocks until SIGTERM/SIGINT).
     log.info("Starting bot...")
-    run_bot(config, handler)
+    try:
+        run_bot(config, handler)
+    except Exception as exc:
+        log.error("Telegram bot failed: %s", exc)
+        # If admin panel is running, keep the process alive.
+        if config.admin_port:
+            log.info("Admin panel still running on port %d. Press Ctrl+C to exit.", config.admin_port)
+            import threading
+            try:
+                threading.Event().wait()
+            except KeyboardInterrupt:
+                pass
 
     # Cleanup.
     store.close()
