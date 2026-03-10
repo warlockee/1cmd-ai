@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OneCmd</title>
+    <meta name="color-scheme" content="dark">
+
+    <!-- CodeMirror 5 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/material-darker.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/markdown/markdown.min.js"></script>
+
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <!-- Login Screen -->
+    <div id="login-screen" class="login-screen" style="display: none;">
+        <div class="login-card">
+            <h1 class="login-title">OneCmd</h1>
+            <p class="login-subtitle">Enter password to continue.</p>
+            <form id="login-form" autocomplete="off">
+                <input
+                    type="password"
+                    id="login-password"
+                    class="login-input"
+                    placeholder="Password"
+                    autofocus
+                    required
+                >
+                <div id="login-error" class="login-error" style="display: none;"></div>
+                <button type="submit" class="btn btn-primary login-btn">Enter</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard" class="dashboard" style="display: none;">
+        <header class="header">
+            <h1 class="header-title">OneCmd</h1>
+            <button id="logout-btn" class="btn btn-logout">Sign out</button>
+        </header>
+
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-tab="terminals">Terminals</button>
+            <button class="nav-tab" data-tab="editor">Editor</button>
+            <button class="nav-tab" data-tab="cronjobs">Cronjobs</button>
+            <button class="nav-tab" data-tab="connectors">Connectors</button>
+        </nav>
+
+        <main class="tab-content">
+            <div id="tab-terminals" class="tab-panel active"></div>
+            <div id="tab-editor" class="tab-panel"></div>
+            <div id="tab-cronjobs" class="tab-panel"></div>
+            <div id="tab-connectors" class="tab-panel"></div>
+        </main>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script>
+        const loginScreen   = document.getElementById('login-screen');
+        const dashboard     = document.getElementById('dashboard');
+        const loginForm     = document.getElementById('login-form');
+        const loginError    = document.getElementById('login-error');
+        const loginPassword = document.getElementById('login-password');
+
+        async function autoLogin() {
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: 'admin' }),
+                });
+                if (res.ok) { showDashboard(); return; }
+            } catch {}
+            showLogin();
+        }
+
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/auth/status');
+                const data = await res.json();
+                if (data.authenticated) showDashboard();
+                else await autoLogin();
+            } catch { showLogin(); }
+        }
+
+        function showLogin() {
+            loginScreen.style.display = 'flex';
+            dashboard.style.display = 'none';
+            loginPassword.focus();
+        }
+
+        function showDashboard() {
+            loginScreen.style.display = 'none';
+            dashboard.style.display = 'block';
+            /* Init the default active tab */
+            const activeTab = document.querySelector('.nav-tab.active');
+            if (activeTab) fireTabInit(activeTab.dataset.tab);
+        }
+
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            loginError.style.display = 'none';
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: loginPassword.value }),
+                });
+                if (res.ok) { loginPassword.value = ''; showDashboard(); }
+                else {
+                    const d = await res.json().catch(() => ({}));
+                    loginError.textContent = d.detail || 'Invalid password.';
+                    loginError.style.display = 'block';
+                }
+            } catch {
+                loginError.textContent = 'Connection error.';
+                loginError.style.display = 'block';
+            }
+        });
+
+        document.getElementById('logout-btn').addEventListener('click', async () => {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            showLogin();
+        });
+
+        /* --- Tab switching --- */
+        const navTabs   = document.querySelectorAll('.nav-tab');
+        const tabPanels = document.querySelectorAll('.tab-panel');
+
+        function fireTabInit(name) {
+            const map = {
+                terminals:  'initTerminals',
+                editor:     'initEditor',
+                cronjobs:   'initCron',
+                connectors: 'initConnectors',
+            };
+            const fn = map[name];
+            if (fn && typeof window[fn] === 'function') window[fn]();
+        }
+
+        navTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const target = tab.dataset.tab;
+                navTabs.forEach(t => t.classList.remove('active'));
+                tabPanels.forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + target).classList.add('active');
+                fireTabInit(target);
+            });
+        });
+
+        /* --- Toast --- */
+        window.showToast = function(message, type, duration) {
+            type = type || 'info';
+            duration = duration || 3000;
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast toast-' + type;
+            toast.textContent = message;
+            container.appendChild(toast);
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 350);
+            }, duration);
+        };
+
+        checkAuth();
+    </script>
+
+    <script src="/static/terminals.js"></script>
+    <script src="/static/editor.js"></script>
+    <script src="/static/cron.js"></script>
+    <script src="/static/connectors.js"></script>
+</body>
+</html>

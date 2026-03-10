@@ -198,7 +198,9 @@ class GeminiProvider(_Provider):
 
     def __init__(self) -> None:
         from google import genai
-        self._client = genai.Client()
+        self._client = genai.Client(
+            http_options={"timeout": 120_000},  # 120s timeout
+        )
 
     def chat(
         self,

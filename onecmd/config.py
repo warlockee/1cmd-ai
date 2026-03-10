@@ -12,6 +12,7 @@ Env vars read:
   ONECMD_MGR_MODEL    - Override LLM model name
   ONECMD_VISIBLE_LINES - Terminal visible lines (int, 10-200)
   ONECMD_SPLIT_MESSAGES - Enable message splitting ("1" or "true")
+  ONECMD_ADMIN_PASSWORD - Admin panel password
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ class Config(BaseModel, extra="forbid"):
     otp_timeout: int = Field(default=300, ge=30, le=28800, description="OTP timeout seconds")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
     google_api_key: str | None = Field(default=None, description="Google API key")
+    admin_port: int | None = Field(default=None, ge=1024, le=65535, description="Port for admin panel (None = disabled)")
+    admin_password: str | None = Field(default=None, description="Admin panel password")
 
     @property
     def has_llm_key(self) -> bool:
@@ -79,6 +82,7 @@ def parse_config(argv: list[str] | None = None) -> Config:
       --use-weak-security
       --enable-otp
       --verbose
+      --admin-port <port>
 
     Env vars fill in LLM keys and display settings.
     """
@@ -92,6 +96,7 @@ def parse_config(argv: list[str] | None = None) -> Config:
     weak_security: bool = False
     enable_otp: bool = False
     verbose: bool = False
+    admin_port: int | None = None
 
     i = 1  # skip argv[0]
     while i < len(argv):
@@ -110,6 +115,12 @@ def parse_config(argv: list[str] | None = None) -> Config:
             enable_otp = True
         elif arg == "--verbose":
             verbose = True
+        elif arg == "--admin-port" and i + 1 < len(argv):
+            i += 1
+            try:
+                admin_port = int(argv[i])
+            except ValueError:
+                pass
         i += 1
 
     # --- Fallback: read apikey from file ---
@@ -137,6 +148,8 @@ def parse_config(argv: list[str] | None = None) -> Config:
 
     split_messages = _parse_bool_env("ONECMD_SPLIT_MESSAGES")
 
+    admin_password = os.environ.get("ONECMD_ADMIN_PASSWORD") or None
+
     return Config(
         apikey=apikey,
         dbfile=dbfile,
@@ -150,4 +163,6 @@ def parse_config(argv: list[str] | None = None) -> Config:
         anthropic_api_key=anthropic_key,
         google_api_key=google_key,
         split_messages=split_messages,
+        admin_port=admin_port,
+        admin_password=admin_password,
     )
