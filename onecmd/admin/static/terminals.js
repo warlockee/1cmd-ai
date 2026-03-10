@@ -59,10 +59,47 @@
         return true;
     }
 
+    /* --- create --- */
+
+    async function createTerminal(btn) {
+        btn.disabled = true;
+        btn.textContent = 'Creating\u2026';
+        var res = await apiFetch('/api/terminals/new', { method: 'POST' });
+        if (!res || !res.ok) {
+            var d = res ? await res.json().catch(function () { return {}; }) : {};
+            window.showToast(d.detail || 'Failed to create terminal', 'error');
+            btn.disabled = false;
+            btn.textContent = '+ New Terminal';
+            return;
+        }
+        window.showToast('Terminal created', 'success');
+        /* Refresh grid after a short delay to let the OS register the new window */
+        var countBefore = (await fetchTerminals()).length;
+        var attempts = 0;
+        var poll = setInterval(async function () {
+            attempts++;
+            var terms = await fetchTerminals();
+            if (terms.length > countBefore || attempts >= 5) {
+                clearInterval(poll);
+                renderGrid(terms);
+            }
+        }, 800);
+    }
+
     /* --- grid --- */
 
     function renderGrid(terminals) {
         var detail = panel.querySelector('.terminal-detail');
+
+        /* toolbar */
+        var toolbar = document.createElement('div');
+        toolbar.className = 'terminal-toolbar';
+
+        var newBtn = document.createElement('button');
+        newBtn.className = 'btn btn-primary btn-sm';
+        newBtn.textContent = '+ New Terminal';
+        newBtn.addEventListener('click', function () { createTerminal(newBtn); });
+        toolbar.appendChild(newBtn);
 
         var grid = document.createElement('div');
         grid.className = 'terminal-grid';
@@ -116,6 +153,7 @@
         });
 
         panel.innerHTML = '';
+        panel.appendChild(toolbar);
         panel.appendChild(grid);
         if (detail) panel.appendChild(detail);
     }

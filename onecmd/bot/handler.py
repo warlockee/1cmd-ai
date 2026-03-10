@@ -59,6 +59,7 @@ _START_TIME = time.time()
 HELP_TEXT = (
     "<b>Commands</b>\n"
     "<code>.list</code> — show terminal windows\n"
+    "<code>.new</code> — open a new terminal\n"
     "<code>.1</code> <code>.2</code> ... — connect to a terminal\n"
     "<code>.rename N name</code> — name a terminal\n"
     "<code>.mgr</code> — AI manager mode\n"
@@ -272,6 +273,17 @@ async def _cmd_health(bot, chat_id, _text, s, backend, _store, config, router=No
     await send_message(bot, chat_id, "\n".join(lines))
 
 
+async def _cmd_new(bot, chat_id, _text, s, backend, _store, _config):
+    result = backend.create()
+    if result is None:
+        await send_message(bot, chat_id, "Failed to create terminal.")
+        return
+    await asyncio.sleep(1.0)
+    terminals = backend.list()
+    await send_message(bot, chat_id,
+        "\u2705 Terminal created.\n\n" + _build_list_text(terminals))
+
+
 async def _cmd_rename(bot, chat_id, text, _s, backend, _store, _config):
     parts = text.split(None, 2)
     if len(parts) < 3:
@@ -308,6 +320,7 @@ async def _cmd_otptimeout(bot, chat_id, text, _s, _backend, store, config):
 
 COMMANDS: dict[str, CmdFn] = {
     ".list": _cmd_list,
+    ".new": _cmd_new,
     ".mgr": _cmd_mgr,
     ".exit": _cmd_exit,
     ".help": _cmd_help,

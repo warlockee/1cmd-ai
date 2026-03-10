@@ -10,6 +10,7 @@ Interface (Protocol):
   connected(term_id: str)   -> bool
   capture(term_id: str)     -> str | None
   send_keys(term_id: str, text: str, literal: bool = True) -> bool
+  create()                  -> str | None
   free_list()               -> None
 
 Guarding (ValidatedBackend wrapper):
@@ -55,6 +56,7 @@ class Backend(Protocol):
     def connected(self, term_id: str) -> bool: ...
     def capture(self, term_id: str) -> str | None: ...
     def send_keys(self, term_id: str, text: str, literal: bool = True) -> bool: ...
+    def create(self) -> str | None: ...
     def free_list(self) -> None: ...
 
 
@@ -103,6 +105,9 @@ class ValidatedBackend:
         self._validate_text(text)
         self._check_rate_limit(term_id)
         return self._inner.send_keys(term_id, text, literal=literal)
+
+    def create(self) -> str | None:
+        return self._inner.create()
 
     def free_list(self) -> None:
         self._inner.free_list()

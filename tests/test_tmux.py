@@ -346,6 +346,52 @@ class TestFreeList:
 
 
 # ---------------------------------------------------------------------------
+# create — command construction
+# ---------------------------------------------------------------------------
+
+
+class TestCreate:
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_create_without_session(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("%5\n")
+        backend = TmuxBackend(session_name=None)
+        result = backend.create()
+
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["tmux", "new-window", "-P", "-F", "#{pane_id}"]
+        assert mock_run.call_args[1]["shell"] is False
+        assert result == "%5"
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_create_with_session(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("%8\n")
+        backend = TmuxBackend(session_name="work")
+        result = backend.create()
+
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["tmux", "new-window", "-t", "work", "-P", "-F", "#{pane_id}"]
+        assert result == "%8"
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_create_failure_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _fail()
+        backend = TmuxBackend()
+        assert backend.create() is None
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_create_timeout_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="tmux", timeout=15)
+        backend = TmuxBackend()
+        assert backend.create() is None
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_create_invalid_output_returns_none(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("garbage\n")
+        backend = TmuxBackend()
+        assert backend.create() is None
+
+
+# ---------------------------------------------------------------------------
 # Shell safety enforcement
 # ---------------------------------------------------------------------------
 

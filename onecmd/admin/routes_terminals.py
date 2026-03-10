@@ -7,6 +7,7 @@ Calling spec:
 
 Routes:
   GET  /api/terminals           -> list terminals
+  POST /api/terminals/new       -> create new terminal
   GET  /api/terminals/{id}      -> capture terminal
   POST /api/terminals/{id}/keys -> send keystrokes
   PUT  /api/terminals/{id}/alias -> rename terminal
@@ -82,6 +83,16 @@ async def list_terminals(request: Request, _auth: bool = Depends(require_auth)):
             "index": i,
         })
     return result
+
+
+@terminals_router.post("/api/terminals/new")
+async def create_terminal(request: Request, _auth: bool = Depends(require_auth)):
+    """Open a new terminal window/pane."""
+    backend = request.app.state.backend
+    result = backend.create()
+    if result is None:
+        raise HTTPException(status_code=500, detail="Failed to create terminal")
+    return {"ok": True, "terminal_id": result}
 
 
 @terminals_router.get("/api/terminals/{term_id:path}")
