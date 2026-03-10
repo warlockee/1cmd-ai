@@ -39,7 +39,7 @@ Issues = "https://github.com/warlockee/1cmd-ai/issues"
 
 [project.optional-dependencies]
 macos = ["pyobjc-framework-Quartz", "pyobjc-framework-ApplicationServices"]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "pytest-asyncio"]
 
 [project.scripts]
 onecmd = "onecmd.main:main"
@@ -56,3 +56,4 @@ include = ["onecmd*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
