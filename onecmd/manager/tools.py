@@ -373,6 +373,15 @@ def tool_list_memories(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def tool_send_message_to_user(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Send an intermediate message to the user immediately."""
+    notify = ctx["notify"]
+    chat_id: int = ctx["chat_id"]
+    text: str = args["text"]
+    notify(chat_id, text)
+    return "Message sent."
+
+
 def tool_read_sop(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Read the current SOP and custom rules."""
     from onecmd.manager.sop import ensure_sop
@@ -399,6 +408,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "delete_memory": tool_delete_memory,
     "list_memories": tool_list_memories,
     "read_sop": tool_read_sop,
+    "send_message_to_user": tool_send_message_to_user,
 }
 
 
@@ -503,6 +513,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "description": "Read the current SOP (Standard Operating Procedure) and custom rules. "
         "Use when the user asks about rules, SOP, configuration, or how you're configured.",
      "input_schema": _schema()},
+    {"name": "send_message_to_user",
+     "description": "Send a message to the user immediately, without waiting for the final response. "
+        "Use this to deliver results one by one (e.g. when summarizing multiple terminals, "
+        "send each summary as a separate message as soon as it's ready). "
+        "You can call this multiple times. Your final response is still sent as usual.",
+     "input_schema": _schema(
+         _props(text="The message text to send to the user (plain text, no markdown)"),
+         ["text"])},
 ]
 
 
