@@ -131,6 +131,19 @@ async def delete_message(bot: Bot, chat_id: int, msg_id: int) -> bool:
         return False
 
 
+async def send_chat_action(bot: Bot, chat_id: int, action: str = "typing") -> bool:
+    """Send a chat action (e.g. 'typing'). Returns True on success."""
+    try:
+        _validate_chat_id(chat_id)
+        await bot.send_chat_action(chat_id=chat_id, action=action)
+        return True
+    except TypeError:
+        raise
+    except TelegramError as exc:
+        logger.error("send_chat_action failed chat_id=%s: %s", chat_id, exc)
+        return False
+
+
 async def answer_callback(bot: Bot, callback_id: str) -> bool:
     """Acknowledge a callback query. Returns True on success, False on failure."""
     try:

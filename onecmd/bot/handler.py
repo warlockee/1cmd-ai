@@ -33,7 +33,7 @@ from telegram.ext import ContextTypes
 from onecmd.auth.owner import check_owner
 from onecmd.auth.totp import STORE_KEY as TOTP_SECRET_KEY
 from onecmd.auth.totp import is_timed_out, totp_verify
-from onecmd.bot.api import answer_callback, html_escape, send_message
+from onecmd.bot.api import answer_callback, html_escape, send_chat_action, send_message
 from onecmd.emoji import parse as emoji_parse
 from onecmd.manager.router import ManagerRouter
 from onecmd.terminal.display import (
@@ -486,7 +486,15 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
         if s.mgr_mode and not text.startswith("."):
             if not text.strip():
                 return
-            response = router.handle(chat_id, text)
+            await send_chat_action(bot, chat_id)
+            loop = asyncio.get_event_loop()
+            task = asyncio.ensure_future(
+                loop.run_in_executor(None, router.handle, chat_id, text))
+            while not task.done():
+                await asyncio.sleep(4.0)
+                if not task.done():
+                    await send_chat_action(bot, chat_id)
+            response = task.result()
             if response:
                 await send_message(bot, chat_id, response)
             return
