@@ -13,6 +13,8 @@ Env vars read:
   ONECMD_VISIBLE_LINES - Terminal visible lines (int, 10-200)
   ONECMD_SPLIT_MESSAGES - Enable message splitting ("1" or "true")
   ONECMD_ADMIN_PASSWORD - Admin panel password
+  SLACK_BOT_TOKEN      - Slack Bot User OAuth Token (xoxb-...)
+  SLACK_APP_TOKEN      - Slack App-Level Token for Socket Mode (xapp-...)
 """
 
 from __future__ import annotations
@@ -41,11 +43,18 @@ class Config(BaseModel, extra="forbid"):
     google_api_key: str | None = Field(default=None, description="Google API key")
     admin_port: int | None = Field(default=None, ge=1024, le=65535, description="Port for admin panel (None = disabled)")
     admin_password: str | None = Field(default=None, description="Admin panel password")
+    slack_bot_token: str | None = Field(default=None, description="Slack Bot User OAuth Token")
+    slack_app_token: str | None = Field(default=None, description="Slack App-Level Token for Socket Mode")
 
     @property
     def has_llm_key(self) -> bool:
         """True if at least one LLM provider key is configured."""
         return bool(self.anthropic_api_key or self.google_api_key)
+
+    @property
+    def has_slack(self) -> bool:
+        """True if both Slack tokens are configured."""
+        return bool(self.slack_bot_token and self.slack_app_token)
 
     @model_validator(mode="after")
     def _validate_keys(self) -> Config:
@@ -150,6 +159,9 @@ def parse_config(argv: list[str] | None = None) -> Config:
 
     admin_password = os.environ.get("ONECMD_ADMIN_PASSWORD") or None
 
+    slack_bot_token = os.environ.get("SLACK_BOT_TOKEN") or None
+    slack_app_token = os.environ.get("SLACK_APP_TOKEN") or None
+
     return Config(
         apikey=apikey,
         dbfile=dbfile,
@@ -165,4 +177,6 @@ def parse_config(argv: list[str] | None = None) -> Config:
         split_messages=split_messages,
         admin_port=admin_port,
         admin_password=admin_password,
+        slack_bot_token=slack_bot_token,
+        slack_app_token=slack_app_token,
     )

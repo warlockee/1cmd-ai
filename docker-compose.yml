@@ -1,0 +1,22 @@
+services:
+  onecmd:
+    image: ghcr.io/warlockee/onecmd:latest
+    # OR build locally:
+    # build: .
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Optional Slack support:
+      # - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      # - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
+    volumes:
+      - onecmd-data:/data
+    # Optional: expose admin panel
+    # ports:
+    #   - "8080:8080"
+    # command: ["--apikey", "${TELEGRAM_BOT_TOKEN}", "--admin-port", "8080"]
+
+volumes:
+  onecmd-data:

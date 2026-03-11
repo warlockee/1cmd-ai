@@ -40,6 +40,7 @@ Issues = "https://github.com/warlockee/1cmd-ai/issues"
 
 [project.optional-dependencies]
 macos = ["pyobjc-framework-Quartz", "pyobjc-framework-ApplicationServices"]
+slack = ["slack-bolt>=1.18.0"]
 dev = ["pytest", "pytest-cov", "pytest-asyncio"]
 
 [project.scripts]

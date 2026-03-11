@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+
+# Data
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Secrets
+apikey.txt
+.env
+
+# Runtime
+.onecmd/
+.omc/
+.onecmd.pid
+run.sh
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# Strategy docs
+plan.md
+docs/launch-posts/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Tests
+tests/

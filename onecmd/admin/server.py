@@ -90,6 +90,9 @@ def create_app(
     from onecmd.admin.routes_connectors import connectors_router
     app.include_router(connectors_router)
 
+    from onecmd.admin.routes_webhooks import webhooks_router
+    app.include_router(webhooks_router)
+
     # -- Static files --
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -414,6 +414,24 @@ def tool_read_sop(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 # Tool registry
 # ---------------------------------------------------------------------------
 
+def tool_restart_service(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Restart a system service (delegated to service_restart module)."""
+    from onecmd.manager.service_restart import tool_restart_service as _impl
+    return _impl(ctx, args)
+
+
+def tool_detect_crashes(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Scan terminal for crash/failure patterns."""
+    from onecmd.manager.service_restart import tool_detect_crashes as _impl
+    return _impl(ctx, args)
+
+
+def tool_check_resources(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Check system resource usage (disk, RAM, CPU)."""
+    from onecmd.manager.resource_monitor import tool_check_resources as _impl
+    return _impl(ctx, args)
+
+
 TOOL_REGISTRY: dict[str, ToolFunc] = {
     "list_terminals": tool_list_terminals,
     "create_terminal": tool_create_terminal,
@@ -429,6 +447,9 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "list_memories": tool_list_memories,
     "read_sop": tool_read_sop,
     "send_message_to_user": tool_send_message_to_user,
+    "restart_service": tool_restart_service,
+    "detect_crashes": tool_detect_crashes,
+    "check_resources": tool_check_resources,
 }
 
 
@@ -545,6 +566,28 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "input_schema": _schema(
          _props(text="The message text to send to the user (plain text, no markdown)"),
          ["text"])},
+    {"name": "restart_service",
+     "description": "Restart a system service (systemd on Linux, brew services on macOS). "
+        "ALWAYS ask the user for confirmation first unless the service is in the auto-restart list "
+        "in custom_rules.md. Set confirmed=true only after user approval.",
+     "input_schema": _schema(
+         {"service_name": {"type": "string",
+                           "description": "Name of the service to restart (e.g. 'nginx', 'redis')"},
+          "confirmed": {"type": "boolean",
+                        "description": "Whether the user confirmed. Must be true to proceed."}},
+         ["service_name"])},
+    {"name": "detect_crashes",
+     "description": "Scan a terminal's output for crash/failure patterns (segfault, OOM, "
+        "connection refused, service failures, etc.). Use when you suspect a crash or "
+        "the user reports issues.",
+     "input_schema": _schema(
+         _props(terminal_id="Terminal ID to scan for crash patterns"),
+         ["terminal_id"])},
+    {"name": "check_resources",
+     "description": "Check current system resource usage (disk space, RAM, CPU load). "
+        "Reports any values exceeding alert thresholds (disk >90%, RAM >95%, "
+        "load > 2x CPU count).",
+     "input_schema": _schema()},
 ]
 
 
