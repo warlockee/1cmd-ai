@@ -33,7 +33,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/warlockee/1cmd-ai"
+Homepage = "https://1cmd.ai"
+Documentation = "https://1cmd.ai"
 Repository = "https://github.com/warlockee/1cmd-ai"
 Issues = "https://github.com/warlockee/1cmd-ai/issues"
 

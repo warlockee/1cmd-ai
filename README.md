@@ -8,13 +8,26 @@ Works on **macOS** and **Linux**.
 
 ## Quick Start
 
+Install from PyPI:
+
+```bash
+pip install onecmd          # Linux
+pip install "onecmd[macos]" # macOS
+```
+
+Then start the bot:
+
+```bash
+onecmd --apikey YOUR_BOT_TOKEN
+```
+
+Or use the one-line installer (clones repo, configures everything interactively):
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/warlockee/1cmd-ai/main/setup.sh | bash
 ```
 
-The setup script handles everything: clones the repo, installs Python dependencies, configures your Telegram bot and AI provider, and starts onecmd.
-
-Or install manually:
+Or install from source:
 
 ```bash
 git clone https://github.com/warlockee/1cmd-ai.git

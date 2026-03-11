@@ -27,3 +27,12 @@ run.sh
 
 # OS
 .DS_Store
+
+# Strategy (not for public repo)
+plan.md
+docs/launch-posts/
+
+# Runtime artifacts
+*.sqlite-shm
+*.sqlite-wal
+.coverage
