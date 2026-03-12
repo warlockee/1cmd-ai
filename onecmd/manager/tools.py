@@ -592,60 +592,48 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
-# Tool guards — enforced at dispatch, not in prompts
+# Pre-dispatch hooks — auto-fix preconditions instead of blocking
 # ---------------------------------------------------------------------------
 #
-# Each guard is (check_fn, blocked_message).
-#   check_fn(tool_args, ctx) -> bool  — return True if OK, False to block
-#   blocked_message — template string, {arg} placeholders filled from tool_args
+# Each hook is (check_fn, fix_fn):
+#   check_fn(tool_args, ctx) -> bool  — True if precondition met
+#   fix_fn(tool_args, ctx) -> str|None — fix it silently, return context or None
 #
-# Guards are checked in order. First failure blocks the call.
-# This is the ONLY place tool preconditions should be enforced.
+# Hooks run before the tool. If check fails, fix runs automatically.
+# The fix result (e.g. terminal content) is prepended to the tool result
+# so the LLM sees the context it would have gotten from read_terminal.
 
-
-def _guard_terminal_read(args: dict[str, Any], _ctx: dict[str, Any]) -> bool:
-    """Has this terminal been read at least once?"""
-    tid = args.get("terminal_id", "")
-    with _activity_lock:
-        return tid in _activity
-
-
-TOOL_GUARDS: dict[str, list[tuple[Any, str]]] = {
-    "send_command": [
-        (_guard_terminal_read,
-         "BLOCKED: Call read_terminal on {terminal_id} first. "
-         "You need to see what's running (AI agent? shell? REPL?) "
-         "before sending input."),
-    ],
-    "start_background_task": [
-        (_guard_terminal_read,
-         "BLOCKED: Call read_terminal on {terminal_id} first."),
-    ],
-    "start_smart_task": [
-        (_guard_terminal_read,
-         "BLOCKED: Call read_terminal on {terminal_id} first."),
-    ],
-    "restart_service": [
-        (_guard_terminal_read,
-         "BLOCKED: Call read_terminal on a terminal first to verify "
-         "the service status before restarting."),
-    ],
+# Tools that require a terminal to have been read first
+_REQUIRES_TERMINAL_READ: set[str] = {
+    "send_command",
+    "start_background_task",
+    "start_smart_task",
+    "restart_service",
 }
 
 
-def _check_guards(tool_name: str, tool_args: dict[str, Any],
-                  ctx: dict[str, Any]) -> str | None:
-    """Run guards for a tool. Returns error message if blocked, None if OK."""
-    guards = TOOL_GUARDS.get(tool_name)
-    if not guards:
+def _ensure_terminal_read(tool_args: dict[str, Any],
+                          ctx: dict[str, Any]) -> str | None:
+    """Auto-read a terminal if it hasn't been read yet. Returns content or None."""
+    tid = tool_args.get("terminal_id", "")
+    if not tid:
         return None
-    for check_fn, msg_template in guards:
-        if not check_fn(tool_args, ctx):
-            try:
-                return msg_template.format(**tool_args)
-            except KeyError:
-                return msg_template
-    return None
+    with _activity_lock:
+        if tid in _activity:
+            return None  # already read
+    # Auto-read — same logic as tool_read_terminal
+    backend: _Backend = ctx["backend"]
+    out = backend.capture(tid)
+    if out is None:
+        return None
+    _track(tid, out)
+    lines = out.split("\n")
+    if len(lines) > _CAPTURE_LINES:
+        lines = lines[-_CAPTURE_LINES:]
+    content = "\n".join(lines)
+    logger.info("Auto-read terminal %s before %s", tid,
+                tool_args.get("_tool_name", "tool"))
+    return content
 
 
 # ---------------------------------------------------------------------------
@@ -655,24 +643,28 @@ def _check_guards(tool_name: str, tool_args: dict[str, Any],
 
 def dispatch(tool_name: str, tool_args: dict[str, Any],
              ctx: dict[str, Any]) -> str:
-    """Look up *tool_name* in the registry, check guards, and execute.
+    """Look up *tool_name* in the registry, run pre-hooks, and execute.
 
-    Guards are checked before execution. If a guard fails, the tool is
-    not called and the guard's message is returned instead.
+    Pre-hooks auto-fix preconditions (e.g. reading a terminal before
+    sending to it). Context from hooks is prepended to the result.
     """
     func = TOOL_REGISTRY.get(tool_name)
     if func is None:
         return f"Unknown tool: {tool_name}"
 
-    # Enforce guards
-    blocked = _check_guards(tool_name, tool_args, ctx)
-    if blocked:
-        logger.info("Guard blocked %s: %s", tool_name, blocked[:100])
-        return blocked
+    # Auto-fix preconditions
+    context_prefix = ""
+    if tool_name in _REQUIRES_TERMINAL_READ:
+        auto_content = _ensure_terminal_read(tool_args, ctx)
+        if auto_content:
+            context_prefix = (
+                f"[auto-read terminal {tool_args.get('terminal_id', '')}]\n"
+                f"{_truncate(auto_content, 2000)}\n\n"
+            )
 
     try:
         result = func(ctx, tool_args)
     except Exception as e:
         logger.error("Tool %s error: %s", tool_name, e, exc_info=True)
         result = f"[Error in {tool_name}: {e}]"
-    return _truncate(result)
+    return _truncate(context_prefix + result)

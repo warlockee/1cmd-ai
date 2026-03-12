@@ -1,4 +1,4 @@
-"""Tests for the tool guard system (enforced preconditions at dispatch layer)."""
+"""Tests for pre-dispatch hooks (auto-fix preconditions before tool execution)."""
 
 import threading
 from unittest.mock import MagicMock
@@ -18,11 +18,11 @@ def _clean_activity():
         tools._activity.clear()
 
 
-def _make_ctx():
+def _make_ctx(capture_output="$ "):
     """Minimal ctx for dispatch."""
     backend = MagicMock()
     backend.list.return_value = []
-    backend.capture.return_value = "$ "
+    backend.capture.return_value = capture_output
     backend.send_keys.return_value = True
     return {
         "backend": backend,
@@ -40,92 +40,107 @@ def _make_ctx():
 
 
 # ---------------------------------------------------------------------------
-# Guard enforcement
+# Auto-read on send_command
 # ---------------------------------------------------------------------------
 
 
-class TestSendCommandGuard:
-    def test_blocked_without_read(self):
+class TestAutoReadOnSend:
+    def test_auto_reads_terminal_before_send(self):
+        ctx = _make_ctx(capture_output="$ hello world")
+        result = tools.dispatch("send_command", {
+            "terminal_id": "%0",
+            "keys": "ls\n",
+            "description": "list files",
+        }, ctx)
+        # Should succeed (not blocked) and include auto-read content
+        assert "auto-read" in result
+        assert "hello world" in result
+        assert "Command queued" in result or "queued" in result.lower()
+
+    def test_no_auto_read_if_already_read(self):
+        tools._track("%0", "$ already seen")
         ctx = _make_ctx()
         result = tools.dispatch("send_command", {
             "terminal_id": "%0",
             "keys": "ls\n",
             "description": "list files",
         }, ctx)
-        assert "BLOCKED" in result
-        assert "read_terminal" in result
-
-    def test_passes_after_read(self):
-        # Simulate a read by tracking the terminal
-        tools._track("%0", "$ some output")
-
-        ctx = _make_ctx()
-        result = tools.dispatch("send_command", {
-            "terminal_id": "%0",
-            "keys": "ls\n",
-            "description": "list files",
-        }, ctx)
-        assert "BLOCKED" not in result
+        # No auto-read prefix since terminal was already read
+        assert "auto-read" not in result
         assert "queued" in result.lower() or "Command" in result
 
-    def test_blocked_message_includes_terminal_id(self):
-        ctx = _make_ctx()
-        result = tools.dispatch("send_command", {
-            "terminal_id": "%5",
-            "keys": "test\n",
+    def test_auto_read_calls_backend_capture(self):
+        ctx = _make_ctx(capture_output="claude> ready")
+        tools.dispatch("send_command", {
+            "terminal_id": "%0",
+            "keys": "stop the server\n",
+            "description": "stop server",
+        }, ctx)
+        ctx["backend"].capture.assert_called_with("%0")
+
+    def test_auto_read_tracks_terminal(self):
+        """After auto-read, terminal is tracked — no double-read next time."""
+        ctx = _make_ctx(capture_output="$ prompt")
+        tools.dispatch("send_command", {
+            "terminal_id": "%0",
+            "keys": "ls\n",
             "description": "test",
         }, ctx)
-        assert "%5" in result
+        # Now terminal should be tracked
+        with tools._activity_lock:
+            assert "%0" in tools._activity
+
+    def test_auto_read_content_visible_to_llm(self):
+        """The LLM sees what's running so it can adjust its behavior."""
+        ctx = _make_ctx(capture_output="╭─ Claude Code\n│ working...\n╰─")
+        result = tools.dispatch("send_command", {
+            "terminal_id": "%0",
+            "keys": "stop the server\n",
+            "description": "stop",
+        }, ctx)
+        assert "Claude Code" in result
 
 
-class TestBackgroundTaskGuard:
-    def test_blocked_without_read(self):
-        ctx = _make_ctx()
+# ---------------------------------------------------------------------------
+# Auto-read on other guarded tools
+# ---------------------------------------------------------------------------
+
+
+class TestAutoReadOnOtherTools:
+    def test_background_task_auto_reads(self):
+        ctx = _make_ctx(capture_output="$ building...")
         result = tools.dispatch("start_background_task", {
             "terminal_id": "%0",
             "check_contains": "done",
             "description": "wait for build",
         }, ctx)
-        assert "BLOCKED" in result
+        assert "auto-read" in result
 
-    def test_passes_after_read(self):
-        tools._track("%0", "$ building...")
-        ctx = _make_ctx()
-        result = tools.dispatch("start_background_task", {
-            "terminal_id": "%0",
-            "check_contains": "done",
-            "description": "wait for build",
-        }, ctx)
-        assert "BLOCKED" not in result
-
-
-class TestSmartTaskGuard:
-    def test_blocked_without_read(self):
-        ctx = _make_ctx()
+    def test_smart_task_auto_reads(self):
+        ctx = _make_ctx(capture_output="$ running tests")
         result = tools.dispatch("start_smart_task", {
             "terminal_id": "%0",
             "goal": "run tests",
             "description": "test runner",
         }, ctx)
-        assert "BLOCKED" in result
+        assert "auto-read" in result
 
 
 # ---------------------------------------------------------------------------
-# Tools without guards work normally
+# Tools without hooks work normally
 # ---------------------------------------------------------------------------
 
 
-class TestUnguardedTools:
-    def test_list_terminals_no_guard(self):
+class TestUnhookedTools:
+    def test_list_terminals_no_auto_read(self):
         ctx = _make_ctx()
         result = tools.dispatch("list_terminals", {}, ctx)
-        assert "BLOCKED" not in result
+        assert "auto-read" not in result
 
-    def test_read_terminal_no_guard(self):
-        ctx = _make_ctx()
-        ctx["backend"].capture.return_value = "$ hello"
+    def test_read_terminal_no_auto_read(self):
+        ctx = _make_ctx(capture_output="$ hello")
         result = tools.dispatch("read_terminal", {"terminal_id": "%0"}, ctx)
-        assert "BLOCKED" not in result
+        assert "auto-read" not in result
         assert "hello" in result
 
     def test_unknown_tool(self):
@@ -135,47 +150,29 @@ class TestUnguardedTools:
 
 
 # ---------------------------------------------------------------------------
-# Guard system internals
+# Edge cases
 # ---------------------------------------------------------------------------
 
 
-class TestCheckGuards:
-    def test_no_guards_returns_none(self):
-        assert tools._check_guards("list_terminals", {}, {}) is None
+class TestEdgeCases:
+    def test_auto_read_handles_capture_failure(self):
+        ctx = _make_ctx()
+        ctx["backend"].capture.return_value = None
+        result = tools.dispatch("send_command", {
+            "terminal_id": "%0",
+            "keys": "ls\n",
+            "description": "test",
+        }, ctx)
+        # Should still proceed (no auto-read content, but not blocked)
+        assert "auto-read" not in result
 
-    def test_passing_guard_returns_none(self):
-        tools._track("%0", "content")
-        result = tools._check_guards("send_command",
-                                     {"terminal_id": "%0"}, {})
-        assert result is None
-
-    def test_failing_guard_returns_message(self):
-        result = tools._check_guards("send_command",
-                                     {"terminal_id": "%9"}, {})
-        assert result is not None
-        assert "BLOCKED" in result
-        assert "%9" in result
-
-    def test_multiple_terminals_independent(self):
-        # Read %0 but not %1
-        tools._track("%0", "content")
-        assert tools._check_guards(
-            "send_command", {"terminal_id": "%0"}, {}) is None
-        assert tools._check_guards(
-            "send_command", {"terminal_id": "%1"}, {}) is not None
-
-
-class TestActivityPollerSatisfiesGuard:
-    """The background poller also calls _track(), so it satisfies the guard."""
-
-    def test_poller_track_satisfies_read_guard(self):
-        # Simulate what the poller does
-        tools._track("%0", "$ output from poller")
-
+    def test_poller_satisfies_hook(self):
+        """Background poller calls _track(), so no auto-read needed."""
+        tools._track("%0", "$ polled output")
         ctx = _make_ctx()
         result = tools.dispatch("send_command", {
             "terminal_id": "%0",
             "keys": "ls\n",
             "description": "test",
         }, ctx)
-        assert "BLOCKED" not in result
+        assert "auto-read" not in result
