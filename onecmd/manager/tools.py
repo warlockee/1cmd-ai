@@ -208,6 +208,12 @@ def tool_read_terminal(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     return _truncate("\n".join(lines))
 
 
+def _has_been_read(terminal_id: str) -> bool:
+    """Check if a terminal has been read at least once (via read_terminal or poller)."""
+    with _activity_lock:
+        return terminal_id in _activity
+
+
 def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Send keystrokes to a terminal via the command queue."""
     backend: _Backend = ctx["backend"]
@@ -216,6 +222,15 @@ def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     keys: str = args["keys"]
     description: str = args["description"]
     stable_seconds: float = args.get("stable_seconds", 5.0)
+
+    # Enforce: must read_terminal first to know what's running (AI agent vs shell)
+    if not _has_been_read(tid):
+        return (
+            f"BLOCKED: You must call read_terminal on {tid} first. "
+            f"You need to see what's running (AI agent? shell? REPL?) "
+            f"before sending input. This prevents sending shell commands "
+            f"to an AI agent or natural language to a shell."
+        )
 
     q = queue_cls.get(tid, backend)
     notify = ctx.get("notify")
