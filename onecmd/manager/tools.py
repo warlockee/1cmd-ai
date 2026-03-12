@@ -208,12 +208,6 @@ def tool_read_terminal(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     return _truncate("\n".join(lines))
 
 
-def _has_been_read(terminal_id: str) -> bool:
-    """Check if a terminal has been read at least once (via read_terminal or poller)."""
-    with _activity_lock:
-        return terminal_id in _activity
-
-
 def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Send keystrokes to a terminal via the command queue."""
     backend: _Backend = ctx["backend"]
@@ -222,15 +216,6 @@ def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     keys: str = args["keys"]
     description: str = args["description"]
     stable_seconds: float = args.get("stable_seconds", 5.0)
-
-    # Enforce: must read_terminal first to know what's running (AI agent vs shell)
-    if not _has_been_read(tid):
-        return (
-            f"BLOCKED: You must call read_terminal on {tid} first. "
-            f"You need to see what's running (AI agent? shell? REPL?) "
-            f"before sending input. This prevents sending shell commands "
-            f"to an AI agent or natural language to a shell."
-        )
 
     q = queue_cls.get(tid, backend)
     notify = ctx.get("notify")
@@ -607,19 +592,84 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
-# Dispatch helper
+# Tool guards — enforced at dispatch, not in prompts
+# ---------------------------------------------------------------------------
+#
+# Each guard is (check_fn, blocked_message).
+#   check_fn(tool_args, ctx) -> bool  — return True if OK, False to block
+#   blocked_message — template string, {arg} placeholders filled from tool_args
+#
+# Guards are checked in order. First failure blocks the call.
+# This is the ONLY place tool preconditions should be enforced.
+
+
+def _guard_terminal_read(args: dict[str, Any], _ctx: dict[str, Any]) -> bool:
+    """Has this terminal been read at least once?"""
+    tid = args.get("terminal_id", "")
+    with _activity_lock:
+        return tid in _activity
+
+
+TOOL_GUARDS: dict[str, list[tuple[Any, str]]] = {
+    "send_command": [
+        (_guard_terminal_read,
+         "BLOCKED: Call read_terminal on {terminal_id} first. "
+         "You need to see what's running (AI agent? shell? REPL?) "
+         "before sending input."),
+    ],
+    "start_background_task": [
+        (_guard_terminal_read,
+         "BLOCKED: Call read_terminal on {terminal_id} first."),
+    ],
+    "start_smart_task": [
+        (_guard_terminal_read,
+         "BLOCKED: Call read_terminal on {terminal_id} first."),
+    ],
+    "restart_service": [
+        (_guard_terminal_read,
+         "BLOCKED: Call read_terminal on a terminal first to verify "
+         "the service status before restarting."),
+    ],
+}
+
+
+def _check_guards(tool_name: str, tool_args: dict[str, Any],
+                  ctx: dict[str, Any]) -> str | None:
+    """Run guards for a tool. Returns error message if blocked, None if OK."""
+    guards = TOOL_GUARDS.get(tool_name)
+    if not guards:
+        return None
+    for check_fn, msg_template in guards:
+        if not check_fn(tool_args, ctx):
+            try:
+                return msg_template.format(**tool_args)
+            except KeyError:
+                return msg_template
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Dispatch
 # ---------------------------------------------------------------------------
 
 
 def dispatch(tool_name: str, tool_args: dict[str, Any],
              ctx: dict[str, Any]) -> str:
-    """Look up *tool_name* in the registry and execute it.
+    """Look up *tool_name* in the registry, check guards, and execute.
 
-    Returns a result string truncated to _MAX_RESULT_CHARS.
+    Guards are checked before execution. If a guard fails, the tool is
+    not called and the guard's message is returned instead.
     """
     func = TOOL_REGISTRY.get(tool_name)
     if func is None:
         return f"Unknown tool: {tool_name}"
+
+    # Enforce guards
+    blocked = _check_guards(tool_name, tool_args, ctx)
+    if blocked:
+        logger.info("Guard blocked %s: %s", tool_name, blocked[:100])
+        return blocked
+
     try:
         result = func(ctx, tool_args)
     except Exception as e:
