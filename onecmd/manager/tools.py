@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Callable, Protocol
@@ -168,12 +169,123 @@ def _truncate(text: str, limit: int = _MAX_RESULT_CHARS) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Terminal type detection
+# ---------------------------------------------------------------------------
+
+# Known AI CLI tools — matched against process name and window title
+_AI_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("claude",  re.compile(r"claude", re.IGNORECASE)),
+    ("gemini",  re.compile(r"gemini", re.IGNORECASE)),
+    ("codex",   re.compile(r"codex", re.IGNORECASE)),
+    ("aider",   re.compile(r"aider", re.IGNORECASE)),
+    ("cursor",  re.compile(r"cursor", re.IGNORECASE)),
+    ("copilot", re.compile(r"copilot", re.IGNORECASE)),
+    ("chatgpt", re.compile(r"chatgpt", re.IGNORECASE)),
+]
+
+# Prompt patterns visible in terminal output that indicate an AI agent
+_AI_OUTPUT_PATTERNS: re.Pattern[str] = re.compile(
+    r"(?:^|\n)\s*(?:claude|gemini|codex|aider|\>)\s*[\$\>❯]?\s*$"
+    r"|╭─|╰─"                          # Claude Code box-drawing UI
+    r"|⏺|tool_use|thinking\.\.\."      # Claude Code indicators
+    r"|✦\s"                            # Codex indicator
+    , re.IGNORECASE | re.MULTILINE
+)
+
+# More specific patterns for detecting AI tools from output text
+# (requires contextual keywords to avoid false positives from e.g. git logs)
+_AI_OUTPUT_NAME_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("claude",  re.compile(r"claude\s+(?:code|cli|agent)|welcome.*claude|claude>", re.IGNORECASE)),
+    ("gemini",  re.compile(r"gemini\s+(?:cli|agent)|welcome.*gemini|gemini>", re.IGNORECASE)),
+    ("codex",   re.compile(r"codex\s+(?:cli|agent)|welcome.*codex|codex>", re.IGNORECASE)),
+    ("aider",   re.compile(r"aider\s+v\d|aider>", re.IGNORECASE)),
+    ("copilot", re.compile(r"copilot\s+(?:cli|agent)|copilot>", re.IGNORECASE)),
+]
+
+_SHELL_NAMES: set[str] = {"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh", "csh"}
+
+_REPL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("python",  re.compile(r"^python|^ipython|^bpython", re.IGNORECASE)),
+    ("node",    re.compile(r"^node$", re.IGNORECASE)),
+    ("irb",     re.compile(r"^irb$", re.IGNORECASE)),
+    ("psql",    re.compile(r"^psql", re.IGNORECASE)),
+    ("mysql",   re.compile(r"^mysql", re.IGNORECASE)),
+    ("sqlite",  re.compile(r"^sqlite", re.IGNORECASE)),
+    ("redis",   re.compile(r"^redis-cli", re.IGNORECASE)),
+]
+
+
+def detect_terminal_type(name: str, title: str,
+                         output: str | None = None) -> tuple[str, str]:
+    """Classify a terminal as AI agent, shell, or REPL.
+
+    Returns (type, detail) where type is one of:
+      "ai"    — AI agent CLI (detail = tool name like "claude")
+      "shell" — standard shell (detail = shell name like "zsh")
+      "repl"  — interactive REPL (detail = language like "python")
+
+    Checks process name and title first (fast), falls back to output
+    analysis only if needed.
+    """
+    combined = f"{name} {title}"
+
+    # 1. Check process name / title for known AI tools
+    for ai_name, pattern in _AI_PATTERNS:
+        if pattern.search(combined):
+            return ("ai", ai_name)
+
+    # 2. Check for known shells
+    base_name = name.split("/")[-1].split()[0] if name else ""
+    if base_name.lower() in _SHELL_NAMES:
+        # Even if the process is bash/zsh, an AI tool may be running inside it
+        if output:
+            tail = output[-2000:]
+            # Check for generic AI UI indicators first
+            if _AI_OUTPUT_PATTERNS.search(tail):
+                for ai_name, pattern in _AI_PATTERNS:
+                    if pattern.search(tail):
+                        return ("ai", ai_name)
+                return ("ai", "unknown")
+            # Check for AI tool welcome/header lines in output
+            for ai_name, pattern in _AI_OUTPUT_NAME_PATTERNS:
+                if pattern.search(tail):
+                    return ("ai", ai_name)
+        return ("shell", base_name.lower())
+
+    # 3. Check for known REPLs
+    for repl_name, pattern in _REPL_PATTERNS:
+        if pattern.search(base_name):
+            return ("repl", repl_name)
+
+    # 4. Unknown process — check output if available
+    if output:
+        tail = output[-2000:]
+        if _AI_OUTPUT_PATTERNS.search(tail):
+            for ai_name, pattern in _AI_PATTERNS:
+                if pattern.search(tail):
+                    return ("ai", ai_name)
+            return ("ai", "unknown")
+        for ai_name, pattern in _AI_OUTPUT_NAME_PATTERNS:
+            if pattern.search(tail):
+                return ("ai", ai_name)
+
+    return ("shell", base_name.lower() or name)
+
+
+_TYPE_LABELS: dict[str, str] = {
+    "ai": "🤖",
+    "shell": "💻",
+    "repl": "📟",
+}
+
+
+# ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
 
 
 def tool_list_terminals(ctx: dict[str, Any], args: dict[str, Any]) -> str:
-    """List all terminal sessions with IDs, names, titles, and activity."""
+    """List all terminal sessions with IDs, names, titles, type, and activity."""
     backend: _Backend = ctx["backend"]
     _ensure_polling(backend)
     terminals = backend.list()
@@ -184,11 +296,20 @@ def tool_list_terminals(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     for i, t in enumerate(terminals):
         ago = _format_ago(t.id)
         alias = aliases.get(str(t.id), "")
+
+        # Detect terminal type using cached output when available
+        with _activity_lock:
+            cached = _activity.get(t.id)
+        cached_output = cached[0] if cached else None
+        ttype, detail = detect_terminal_type(t.name, t.title, cached_output)
+        icon = _TYPE_LABELS.get(ttype, "")
+
         alias_str = f" ({alias})" if alias else ""
         act_str = f" — {ago}" if ago else ""
         title_str = f" - {t.title}" if t.title and t.title != t.name else ""
+        type_str = f" {icon}{detail}" if detail else ""
         lines.append(
-            f"Terminal {i}{alias_str} [{t.id}]: {t.name}{title_str}{act_str}"
+            f"Terminal {i}{alias_str} [{t.id}]:{type_str} {t.name}{title_str}{act_str}"
         )
     return "\n".join(lines)
 
@@ -496,7 +617,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "description": "Send keystrokes to a terminal and watch for the output to finish "
         "in the background. Returns immediately — the terminal is monitored asynchronously "
         "and the user is notified when the output stabilizes (stops changing). "
-        "Use this for ALL commands. You do NOT need to guess if a command is fast or slow.",
+        "Use this for ALL commands. You do NOT need to guess if a command is fast or slow. "
+        "IMPORTANT: Check terminal type from list_terminals first. "
+        "For 🤖AI terminals (claude/gemini/codex/aider) send natural language. "
+        "For 💻shell terminals send exact shell commands. Never mix them.",
      "input_schema": _schema(
          _props(terminal_id="Terminal ID from list_terminals",
                 keys="Text/keystrokes to send. Use \\n for Enter, \\t for Tab.",
