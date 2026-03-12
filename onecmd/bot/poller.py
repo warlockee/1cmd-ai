@@ -67,6 +67,7 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
     application = (
         Application.builder()
         .token(config.apikey)
+        .concurrent_updates(True)
         .build()
     )
 

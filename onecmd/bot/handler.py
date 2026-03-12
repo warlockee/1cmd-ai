@@ -328,16 +328,33 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
         """Sync notify — safe to call from background threads (queue callbacks).
 
         Schedules the async send_message on the main event loop via
-        run_coroutine_threadsafe.
+        run_coroutine_threadsafe.  Text is HTML-escaped because callers
+        send raw terminal output that can contain <, >, & characters
+        which break Telegram's HTML parser.
         """
         bot = _notify_async._bot
         if bot is None:
+            logger.warning("_notify_sync: bot is None, dropping notification for chat %s", chat_id)
             return
         loop = _notify_sync._loop
         if loop is None or loop.is_closed():
+            logger.warning("_notify_sync: event loop unavailable, dropping notification for chat %s", chat_id)
             return
         import asyncio
-        asyncio.run_coroutine_threadsafe(send_message(bot, chat_id, text), loop)
+
+        async def _send_with_fallback() -> None:
+            escaped = html_escape(text)
+            result = await send_message(bot, chat_id, escaped)
+            if result is None:
+                # HTML parse failed — retry as plain text
+                result = await send_message(bot, chat_id, text, parse_mode=None)
+            if result is None:
+                logger.error("_notify_sync: notification delivery failed for chat %s", chat_id)
+
+        fut = asyncio.run_coroutine_threadsafe(_send_with_fallback(), loop)
+        fut.add_done_callback(
+            lambda f: logger.error("_notify_sync error: %s", f.exception())
+            if f.exception() else None)
 
     _notify_sync._loop = None  # type: ignore[attr-defined]
 
