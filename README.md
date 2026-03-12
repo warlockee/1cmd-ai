@@ -8,23 +8,15 @@ Works on **macOS** and **Linux**.
 
 ## Quick Start
 
-Install from PyPI:
+Use the one-line installer (clones repo, configures everything interactively):
 
 ```bash
-pip install onecmd          # Linux
-pip install "onecmd[macos]" # macOS
+curl -sL https://1cmd.ai/setup.sh | bash
 ```
-
 Then start the bot:
 
 ```bash
 onecmd --apikey YOUR_BOT_TOKEN
-```
-
-Or use the one-line installer (clones repo, configures everything interactively):
-
-```bash
-curl -sL https://1cmd.ai/setup.sh | bash
 ```
 
 Or install from source:
