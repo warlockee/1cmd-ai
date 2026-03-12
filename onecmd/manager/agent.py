@@ -271,10 +271,17 @@ class Agent:
         """Process a user message and return the assistant's response text.
 
         Thread-safe: serialized per chat_id to prevent conversation corruption.
+        Times out after 180s to prevent one stuck call from blocking follow-ups.
         """
         lock = self._get_chat_lock(chat_id)
-        with lock:
+        acquired = lock.acquire(timeout=180)
+        if not acquired:
+            logger.warning("Chat lock timeout for chat %d — previous request still running", chat_id)
+            return "Still processing your previous request. Please wait a moment."
+        try:
             return strip_markdown(self._handle_locked(chat_id, text))
+        finally:
+            lock.release()
 
     # -- internals ----------------------------------------------------------
 

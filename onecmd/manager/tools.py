@@ -259,9 +259,16 @@ def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 
     q.enqueue(keys, description, stable_seconds=stable_seconds,
               on_complete=on_complete)
+
+    # Notify user directly — don't let the LLM rephrase system events
+    if notify and chat_id is not None:
+        notify(chat_id, f"Command sent to terminal {tid}: {description}")
+
     return (
         f"Command queued for terminal {tid}: {description}\n"
-        "Monitoring output in background — you'll be notified when it stabilizes."
+        "The user has already been notified. "
+        "A completion notification will be sent automatically by the system. "
+        "Do not tell the user you will notify them or follow up."
     )
 
 
@@ -319,10 +326,15 @@ def tool_start_bg_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     with tasks_lock:
         tasks[task.task_id] = task
     task.start()
+
+    notify(chat_id, f"Background task #{task.task_id} started: {task.description}")
+
     return (
         f"Background task #{task.task_id} started: {task.description} "
         f"(polling every {task.poll_interval}s, "
-        f"max {task.max_iterations} iterations)"
+        f"max {task.max_iterations} iterations)\n"
+        "The user has already been notified. "
+        "The system will notify them automatically on completion."
     )
 
 
@@ -349,10 +361,15 @@ def tool_start_smart_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     with tasks_lock:
         tasks[task.task_id] = task
     task.start()
+
+    notify(ctx["chat_id"], f"Smart task #{task.task_id} started: {task.description}")
+
     return (
         f"Smart task #{task.task_id} started: {task.description} "
         f"(polling every {task.poll_interval}s, "
-        f"max {task.max_iterations} iterations)"
+        f"max {task.max_iterations} iterations)\n"
+        "The user has already been notified. "
+        "The system will notify them automatically on completion."
     )
 
 

@@ -80,7 +80,7 @@ class AnthropicProvider(_Provider):
 
     def __init__(self) -> None:
         import anthropic
-        self._client = anthropic.Anthropic()
+        self._client = anthropic.Anthropic(timeout=120.0)
 
     def chat(
         self,
