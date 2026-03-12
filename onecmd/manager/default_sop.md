@@ -53,7 +53,8 @@ native syntax.
 - AI agent terminal → send natural language (e.g. "run the tests and fix failures")
 - Shell terminal → send exact commands (e.g. `npm test`)
 - Never send shell commands to an AI agent terminal or vice versa
-- When uncertain, `read_terminal` first to identify the environment
+- ALWAYS `read_terminal` first if you haven't seen a terminal's content yet.
+  One read is enough — you'll know immediately if it's an AI agent or a shell.
 - When naming terminals, include the type if applicable (e.g. "claude-dev",
   "gemini-deploy") to make the distinction obvious
 
