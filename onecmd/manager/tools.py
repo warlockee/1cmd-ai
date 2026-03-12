@@ -213,7 +213,7 @@ def tool_list_terminals(ctx: dict[str, Any], args: dict[str, Any]) -> str:
         alias_str = f" ({alias})" if alias else ""
         act_str = f" — {ago}" if ago else ""
         title_str = f" - {t.title}" if t.title and t.title != t.name else ""
-        line = f"Terminal {i}{alias_str} [{t.id}]: {t.name}{title_str}{act_str}"
+        line = f"Terminal {i}{alias_str} [id={t.id}]: {t.name}{title_str}{act_str}"
         preview = previews.get(t.id)
         if preview:
             line += f"\n  Content:\n  " + "\n  ".join(preview.split("\n"))
@@ -286,7 +286,7 @@ def tool_create_terminal(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     for i, t in enumerate(terminals):
         alias = aliases.get(str(t.id), "")
         alias_str = f" ({alias})" if alias else ""
-        lines.append(f"Terminal {i}{alias_str} [{t.id}]: {t.name}")
+        lines.append(f"Terminal {i}{alias_str} [id={t.id}]: {t.name}")
     return "\n".join(lines)
 
 
@@ -535,21 +535,21 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "proactively suggest descriptive names based on what's running in each terminal "
         "(e.g. 'dev-server', 'db-console', 'build-logs').",
      "input_schema": _schema(
-         _props(terminal_id="Terminal ID from list_terminals",
+         _props(terminal_id="The id value from list_terminals (the value after 'id=' in brackets, e.g. '119' or '%0')",
                 name="Custom name for the terminal (e.g. 'dev-server', 'logs')"),
          ["terminal_id", "name"])},
     {"name": "read_terminal",
      "description": "Read/capture the current visible text from a terminal. "
-        "Use the terminal's 'id' field (e.g., '%0' on tmux or '12399' on macOS).",
+        "Use the id value from list_terminals (the value after 'id=' in brackets).",
      "input_schema": _schema(
-         _props(terminal_id="Terminal ID from list_terminals"), ["terminal_id"])},
+         _props(terminal_id="The id value from list_terminals (the value after 'id=' in brackets, e.g. '119' or '%0')"), ["terminal_id"])},
     {"name": "send_command",
      "description": "Send keystrokes to a terminal and watch for the output to finish "
         "in the background. Returns immediately — the terminal is monitored asynchronously "
         "and the user is notified when the output stabilizes (stops changing). "
         "Use this for ALL commands. You do NOT need to guess if a command is fast or slow.",
      "input_schema": _schema(
-         _props(terminal_id="Terminal ID from list_terminals",
+         _props(terminal_id="The id value from list_terminals (the value after 'id=' in brackets, e.g. '119' or '%0')",
                 keys="Text/keystrokes to send. Use \\n for Enter, \\t for Tab.",
                 description="Brief description of what this command does (shown in notification)"),
          ["terminal_id", "keys", "description"],
@@ -560,7 +560,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "and checks for a specific text condition. Useful for polling tasks like "
         "'keep asking until it says yes'. Monitors output stability after each send.",
      "input_schema": _schema(
-         _props(terminal_id="Terminal ID to operate on",
+         _props(terminal_id="The id value from list_terminals (e.g. '119' or '%0') — NOT the alias name",
                 send_text="Text to send each iteration (empty to just monitor)",
                 check_contains="Substring to look for. Task completes when found.",
                 description="Human-readable description of what this task does"),
@@ -573,7 +573,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "notify user, send keystrokes, or mark complete. Use for complex goals that "
         "can't be a simple substring check.",
      "input_schema": _schema(
-         _props(terminal_id="Terminal ID to monitor",
+         _props(terminal_id="The id value from list_terminals (e.g. '119' or '%0') — NOT the alias name",
                 prompt="Natural language description of what to monitor/achieve",
                 send_text="Optional text to send each iteration before capturing"),
          ["terminal_id", "prompt"],
@@ -632,7 +632,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "connection refused, service failures, etc.). Use when you suspect a crash or "
         "the user reports issues.",
      "input_schema": _schema(
-         _props(terminal_id="Terminal ID to scan for crash patterns"),
+         _props(terminal_id="The id value from list_terminals (e.g. '119' or '%0')"),
          ["terminal_id"])},
     {"name": "check_resources",
      "description": "Check current system resource usage (disk space, RAM, CPU load). "
