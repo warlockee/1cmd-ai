@@ -24,6 +24,7 @@ _DB_PATH: str = os.path.join(
 )
 _lock = threading.Lock()
 _MAX: int = 100
+_MAX_CONTENT_CHARS: int = 500  # per-memory content cap at save time
 
 
 def _connect() -> sqlite3.Connection:
@@ -62,6 +63,9 @@ def list_for_chat(chat_id: int) -> list[tuple[int, str, str]]:
 
 def save(chat_id: int, content: str, category: str = "general") -> int | None:
     """Insert a memory and prune oldest beyond the per-chat cap. Returns row id."""
+    # Enforce content length at save time — LLM should be concise but enforce it
+    if len(content) > _MAX_CONTENT_CHARS:
+        content = content[:_MAX_CONTENT_CHARS].rstrip() + "..."
     now = time.time()
     with _lock:
         conn = _connect()

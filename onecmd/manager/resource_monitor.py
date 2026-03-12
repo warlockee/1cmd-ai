@@ -30,11 +30,24 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# Defaults
+# Defaults (overridable via env vars)
 DEFAULT_INTERVAL = 1800  # 30 minutes
-DISK_THRESHOLD = 90  # percent
-RAM_THRESHOLD = 95  # percent
-LOAD_MULTIPLIER = 2  # load avg > cpu_count * this
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer from an environment variable with fallback."""
+    val = os.environ.get(name)
+    if val is not None:
+        try:
+            return int(val)
+        except ValueError:
+            pass
+    return default
+
+
+DISK_THRESHOLD = _env_int("ONECMD_DISK_THRESHOLD", 90)
+RAM_THRESHOLD = _env_int("ONECMD_RAM_THRESHOLD", 95)
+LOAD_MULTIPLIER = _env_int("ONECMD_LOAD_MULTIPLIER", 2)
 
 NotifyFn = Callable[[int, str], None]
 
