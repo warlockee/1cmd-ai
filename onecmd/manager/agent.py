@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -54,6 +55,28 @@ SUMMARY_MAX_CHARS: int = 2000
 TASK_PRUNE_AGE: float = 3600.0
 
 NotifyFn = Callable[[int, str], None]
+
+# ---------------------------------------------------------------------------
+# Markdown stripping — Telegram legacy parser breaks on **, *, _, `
+# ---------------------------------------------------------------------------
+
+_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
+_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_STAR_RE = re.compile(r"\*(.+?)\*")
+_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(.+?)_(?!\w)")
+_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+
+
+def strip_markdown(text: str) -> str:
+    """Remove common markdown formatting from LLM output for plain-text display."""
+    text = _CODE_BLOCK_RE.sub(lambda m: m.group()[3:].lstrip().rsplit("```", 1)[0], text)
+    text = _INLINE_CODE_RE.sub(r"\1", text)
+    text = _BOLD_RE.sub(r"\1", text)
+    text = _ITALIC_STAR_RE.sub(r"\1", text)
+    text = _ITALIC_UNDER_RE.sub(r"\1", text)
+    text = _HEADING_RE.sub("", text)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +274,7 @@ class Agent:
         """
         lock = self._get_chat_lock(chat_id)
         with lock:
-            return self._handle_locked(chat_id, text)
+            return strip_markdown(self._handle_locked(chat_id, text))
 
     # -- internals ----------------------------------------------------------
 

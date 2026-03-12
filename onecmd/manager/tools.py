@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Callable, Protocol
@@ -172,13 +173,38 @@ def _truncate(text: str, limit: int = _MAX_RESULT_CHARS) -> str:
 # ---------------------------------------------------------------------------
 
 
+_PREVIEW_LINES = 5  # lines of content to show in list_terminals auto-read
+
+
 def tool_list_terminals(ctx: dict[str, Any], args: dict[str, Any]) -> str:
-    """List all terminal sessions with IDs, names, titles, and activity."""
+    """List all terminal sessions with IDs, names, titles, and activity.
+
+    On first call (before any terminal has been read), auto-captures every
+    terminal and includes a short content preview so the LLM knows what's
+    running everywhere without needing separate read_terminal calls.
+    """
     backend: _Backend = ctx["backend"]
-    _ensure_polling(backend)
     terminals = backend.list()
     if not terminals:
+        _ensure_polling(backend)
         return "No terminals found."
+
+    # Determine which terminals haven't been read yet (before starting
+    # the poll daemon, which would race and track them first).
+    with _activity_lock:
+        unread = [t for t in terminals if t.id not in _activity]
+
+    _ensure_polling(backend)
+
+    # Auto-read unread terminals
+    previews: dict[str, str] = {}
+    for t in unread:
+        out = backend.capture(t.id)
+        if out is not None:
+            _track(t.id, out)
+            tail = out.strip().split("\n")
+            previews[t.id] = "\n".join(tail[-_PREVIEW_LINES:])
+
     aliases = _read_aliases()
     lines: list[str] = []
     for i, t in enumerate(terminals):
@@ -187,9 +213,15 @@ def tool_list_terminals(ctx: dict[str, Any], args: dict[str, Any]) -> str:
         alias_str = f" ({alias})" if alias else ""
         act_str = f" — {ago}" if ago else ""
         title_str = f" - {t.title}" if t.title and t.title != t.name else ""
-        lines.append(
-            f"Terminal {i}{alias_str} [{t.id}]: {t.name}{title_str}{act_str}"
-        )
+        line = f"Terminal {i}{alias_str} [{t.id}]: {t.name}{title_str}{act_str}"
+        preview = previews.get(t.id)
+        if preview:
+            line += f"\n  Content:\n  " + "\n  ".join(preview.split("\n"))
+        lines.append(line)
+
+    if previews:
+        lines.insert(0, f"[auto-read {len(previews)} terminal(s)]")
+
     return "\n".join(lines)
 
 
@@ -394,9 +426,11 @@ def tool_list_memories(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 
 def tool_send_message_to_user(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Send an intermediate message to the user immediately."""
+    from onecmd.manager.agent import strip_markdown
+
     notify = ctx["notify"]
     chat_id: int = ctx["chat_id"]
-    text: str = args["text"]
+    text: str = strip_markdown(args["text"])
     notify(chat_id, text)
     return "Message sent."
 
@@ -637,6 +671,39 @@ def _ensure_terminal_read(tool_args: dict[str, Any],
 
 
 # ---------------------------------------------------------------------------
+# Dangerous command detection
+# ---------------------------------------------------------------------------
+
+_DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\brm\s+(-\w*[rf]|-\w*[rf]\w*)\b"), "rm with -r or -f flag"),
+    (re.compile(r"\brm\s+-rf\b"), "rm -rf"),
+    (re.compile(r"\bDROP\s+(TABLE|DATABASE|SCHEMA)\b", re.IGNORECASE), "DROP statement"),
+    (re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE), "DELETE FROM"),
+    (re.compile(r"\bTRUNCATE\b", re.IGNORECASE), "TRUNCATE"),
+    (re.compile(r"\bkill\s+-9\b"), "kill -9"),
+    (re.compile(r"\bkillall\b"), "killall"),
+    (re.compile(r"\bgit\s+push\s+.*--force\b"), "git push --force"),
+    (re.compile(r"\bgit\s+push\s+-f\b"), "git push -f"),
+    (re.compile(r"\bgit\s+reset\s+--hard\b"), "git reset --hard"),
+    (re.compile(r"\bgit\s+clean\s+-[a-z]*f"), "git clean -f"),
+    (re.compile(r"\bmkfs\b"), "mkfs (format disk)"),
+    (re.compile(r"\bdd\s+.*of=/dev/"), "dd to device"),
+    (re.compile(r">\s*/dev/sd[a-z]"), "overwrite block device"),
+    (re.compile(r"\bshutdown\b"), "shutdown"),
+    (re.compile(r"\breboot\b"), "reboot"),
+    (re.compile(r"\bsystemctl\s+(stop|disable)\b"), "systemctl stop/disable"),
+]
+
+
+def _check_dangerous(keys: str) -> str | None:
+    """Return a warning string if keys contain a dangerous pattern, else None."""
+    for pattern, label in _DANGEROUS_PATTERNS:
+        if pattern.search(keys):
+            return label
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -660,6 +727,20 @@ def dispatch(tool_name: str, tool_args: dict[str, Any],
             context_prefix = (
                 f"[auto-read terminal {tool_args.get('terminal_id', '')}]\n"
                 f"{_truncate(auto_content, 2000)}\n\n"
+            )
+
+    # Dangerous command guard — block and ask for user confirmation
+    if tool_name == "send_command":
+        keys = tool_args.get("keys", "")
+        danger = _check_dangerous(keys)
+        if danger:
+            desc = tool_args.get("description", "")
+            logger.warning("Blocked dangerous command (%s): %s", danger, keys)
+            return (
+                f"[BLOCKED — dangerous command detected: {danger}]\n"
+                f"Command: {keys.strip()}\n"
+                f"Description: {desc}\n"
+                "Ask the user for explicit confirmation before retrying."
             )
 
     try:
