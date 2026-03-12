@@ -31,6 +31,7 @@ from onecmd.auth.totp import is_timed_out, totp_verify
 from onecmd.connectors.base import Connector
 from onecmd.emoji import parse as emoji_parse
 from onecmd.manager.router import ManagerRouter
+from onecmd.texts import HELP_TEXT, build_welcome_message
 
 if TYPE_CHECKING:
     from onecmd.config import Config
@@ -43,26 +44,6 @@ ALIASES_PATH = ".onecmd/aliases.json"
 DOT_N_RE = re.compile(r"^\.(\d+)$")
 REFRESH_CALLBACK = "refresh"
 _START_TIME = time.time()
-
-HELP_TEXT = (
-    "<b>Commands</b>\n"
-    "<code>.list</code> — show terminal windows\n"
-    "<code>.new</code> — open a new terminal\n"
-    "<code>.1</code> <code>.2</code> ... — connect to a terminal\n"
-    "<code>.rename N name</code> — name a terminal\n"
-    "<code>.mgr</code> — AI manager mode\n"
-    "<code>.exit</code> — leave manager mode\n"
-    "<code>.health</code> — health report\n"
-    "<code>.help</code> — this help\n\n"
-    "<b>Once connected</b>, text is sent as keystrokes.\n"
-    "Enter is auto-appended; end with \U0001f49c to suppress.\n\n"
-    "<b>Modifiers</b>\n"
-    "<code>\u2764\ufe0f</code> Ctrl  <code>\U0001f499</code> Alt  "
-    "<code>\U0001f49a</code> Cmd  <code>\U0001f49b</code> ESC  "
-    "<code>\U0001f9e1</code> Enter\n\n"
-    "Escape: <code>\\n</code>=Enter  <code>\\t</code>=Tab"
-)
-
 
 def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -273,21 +254,8 @@ def create_connector_handler(config: Config, store: Store,
 
         if just_reg:
             terminals = backend.list()
-            term_count = len(terminals)
-            welcome = (
-                "\U0001f44b <b>Welcome to OneCmd!</b>\n"
-                f"You're now the owner. {term_count} terminal"
-                f"{'s' if term_count != 1 else ''} found.\n\n"
-            )
-            if term_count > 0:
-                welcome += _build_list_text(terminals) + "\n\n"
-            welcome += (
-                "Quick start:\n"
-                "<code>.list</code> — show terminals\n"
-                "<code>.1</code> — connect to first terminal\n"
-                "<code>.mgr</code> — AI manager mode\n"
-                "<code>.help</code> — all commands"
-            )
+            welcome = build_welcome_message(
+                len(terminals), _build_list_text(terminals))
             await connector.send_message(chat_id, welcome)
             return
 

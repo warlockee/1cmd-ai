@@ -28,6 +28,7 @@ import platform
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -45,44 +46,60 @@ class CrashEvent:
     severity: str  # "warning", "error", "critical"
 
 
-# Compiled patterns: (name, regex, severity)
-_PATTERNS: list[tuple[str, re.Pattern, str]] = [
-    ("segfault", re.compile(
-        r"segfault|segmentation fault|sigsegv|signal 11",
-        re.IGNORECASE), "critical"),
-    ("oom_killed", re.compile(
-        r"oom.?kill|out of memory|cannot allocate memory|killed.*oom",
-        re.IGNORECASE), "critical"),
-    ("process_exited", re.compile(
-        r"(?:process|pid \d+).*(?:exited|died|terminated|killed)"
-        r"|exit(?:ed)?\s+(?:with\s+)?(?:code|status)\s+[1-9]\d*",
-        re.IGNORECASE), "error"),
-    ("connection_refused", re.compile(
-        r"connection refused|econnrefused|connect\(\): connection refused",
-        re.IGNORECASE), "warning"),
-    ("address_in_use", re.compile(
-        r"address already in use|eaddrinuse|bind.*failed",
-        re.IGNORECASE), "error"),
-    ("systemd_failed", re.compile(
-        r"(?:systemd|systemctl).*(?:failed|inactive \(dead\))"
-        r"|Failed to start .+\.service"
-        r"|\.service.*(?:failed|entered failed state)",
-        re.IGNORECASE), "error"),
-    ("docker_exit", re.compile(
-        r"container.*(?:exited|died|stopped|unhealthy)"
-        r"|Exited \(\d+\)\s",
-        re.IGNORECASE), "error"),
-    ("unhandled_exception", re.compile(
-        r"Traceback \(most recent call last\)"
-        r"|Error: .+(?:FATAL|PANIC|unhandled)"
-        r"|FATAL ERROR"
-        r"|java\.lang\..*(?:Error|Exception).*at\s",
-        re.IGNORECASE), "error"),
-    ("service_crash", re.compile(
-        r"(?:nginx|apache|mysql|postgres|redis|mongodb|docker).*"
-        r"(?:crash|fatal|abort|core dump)",
-        re.IGNORECASE), "critical"),
-]
+# ---------------------------------------------------------------------------
+# Pattern loading — user override > bundled default > hardcoded fallback
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PATTERNS_FILE = Path(__file__).parent / "default_crash_patterns.md"
+_USER_PATTERNS_FILE = Path(".onecmd/crash_patterns.md")
+
+
+def _parse_patterns_file(text: str) -> list[tuple[str, re.Pattern, str]]:
+    """Parse a crash patterns file into compiled patterns.
+
+    Format: ``name | regex | severity``
+    The name is before the first ``|`` and severity after the last ``|``.
+    Everything in between is the regex (which may contain ``|`` for alternation).
+    """
+    patterns = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Split on first and last pipe to allow | inside the regex
+        first_pipe = line.find("|")
+        last_pipe = line.rfind("|")
+        if first_pipe == -1 or first_pipe == last_pipe:
+            continue
+        name = line[:first_pipe].strip()
+        regex_str = line[first_pipe + 1:last_pipe].strip()
+        severity = line[last_pipe + 1:].strip()
+        if name and regex_str and severity:
+            try:
+                patterns.append((name, re.compile(regex_str, re.IGNORECASE), severity))
+            except re.error as e:
+                logger.warning("Invalid crash pattern '%s': %s", name, e)
+    return patterns
+
+
+def _load_patterns() -> list[tuple[str, re.Pattern, str]]:
+    """Load crash patterns: user file > bundled default > hardcoded fallback."""
+    for path in (_USER_PATTERNS_FILE, _DEFAULT_PATTERNS_FILE):
+        if path.exists():
+            try:
+                patterns = _parse_patterns_file(path.read_text())
+                if patterns:
+                    return patterns
+            except OSError:
+                continue
+    logger.warning("Crash pattern files not found, using hardcoded fallback")
+    return [
+        ("segfault", re.compile(r"segfault|segmentation fault|sigsegv|signal 11", re.IGNORECASE), "critical"),
+        ("oom_killed", re.compile(r"oom.?kill|out of memory|cannot allocate memory", re.IGNORECASE), "critical"),
+    ]
+
+
+_PATTERNS: list[tuple[str, re.Pattern, str]] = _load_patterns()
 
 
 def detect_crashes(text: str) -> list[CrashEvent]:
