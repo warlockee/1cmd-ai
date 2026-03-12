@@ -24,7 +24,7 @@ onecmd --apikey YOUR_BOT_TOKEN
 Or use the one-line installer (clones repo, configures everything interactively):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/warlockee/1cmd-ai/main/setup.sh | bash
+curl -sL https://1cmd.ai/setup.sh | bash
 ```
 
 Or install from source:
