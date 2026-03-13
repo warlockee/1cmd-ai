@@ -230,14 +230,40 @@ async def _cmd_debug(bot, chat_id, _text, s, _backend, _store, _config, router=N
         await send_message(bot, chat_id, "Manager not available.")
 
 
+async def _cmd_ceo(bot, chat_id, _text, s, _backend, _store, _config, router=None):
+    if not s.mgr_mode or not getattr(s, '_ceo_mode', False):
+        msg = router.activate_ceo() if router else "CEO not available."
+        if not router or not router.ceo_active:
+            await send_message(bot, chat_id, msg)
+            return
+        s.mgr_mode = True
+        s._ceo_mode = True
+        await send_message(bot, chat_id,
+                     "\U0001f3e2 CEO mode on.\n"
+                     "Describe what you want to build.\n"
+                     "Dot commands still work: .list .1 .exit")
+    else:
+        s.mgr_mode = False
+        s._ceo_mode = False
+        if router:
+            router.deactivate_ceo()
+        await send_message(bot, chat_id, "CEO mode off.")
+
+
 async def _cmd_exit(bot, chat_id, _text, s, _backend, _store, _config, router=None):
-    if s.mgr_mode:
+    if getattr(s, '_ceo_mode', False):
+        s._ceo_mode = False
+        s.mgr_mode = False
+        if router:
+            router.deactivate_ceo()
+        await send_message(bot, chat_id, "CEO mode off.")
+    elif s.mgr_mode:
         s.mgr_mode = False
         if router:
             router.deactivate()
         await send_message(bot, chat_id, "Manager mode off.")
     else:
-        await send_message(bot, chat_id, "Not in manager mode.")
+        await send_message(bot, chat_id, "Not in manager or CEO mode.")
 
 
 async def _cmd_help(bot, chat_id, _text, _s, _backend, _store, _config):
@@ -253,7 +279,7 @@ async def _cmd_health(bot, chat_id, _text, s, backend, _store, config, router=No
         "<b>Health Report</b>",
         f"Uptime: {h}h {m}m {sec}s",
         f"Connected: {conn}",
-        f"Manager: {'on' if s.mgr_mode else 'off'}",
+        f"Manager: {'CEO' if getattr(s, '_ceo_mode', False) else 'on' if s.mgr_mode else 'off'}",
         f"LLM: {'configured' if config.has_llm_key else 'not configured'}",
         f"Terminals: {len(backend.list())}",
     ]
@@ -312,6 +338,7 @@ COMMANDS: dict[str, CmdFn] = {
     ".list": _cmd_list,
     ".new": _cmd_new,
     ".mgr": _cmd_mgr,
+    ".ceo": _cmd_ceo,
     ".debug": _cmd_debug,
     ".exit": _cmd_exit,
     ".help": _cmd_help,
@@ -370,7 +397,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
 
     router = ManagerRouter(backend, config, _notify_sync)
 
-    _ROUTER_CMDS = {".mgr", ".exit", ".health", ".debug"}
+    _ROUTER_CMDS = {".mgr", ".ceo", ".exit", ".health", ".debug"}
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot = context.bot
@@ -491,14 +518,16 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             await _show_terminal(bot, chat_id, t.id, s, backend, config)
             return
 
-        # 6. Manager mode — route to LLM agent
+        # 6. CEO / Manager mode — route to LLM agent
         if s.mgr_mode and not text.startswith("."):
             if not text.strip():
                 return
             await send_chat_action(bot, chat_id)
+            ceo = getattr(s, '_ceo_mode', False)
+            handle_fn = router.handle_ceo if ceo else router.handle
             loop = asyncio.get_event_loop()
             task = asyncio.ensure_future(
-                loop.run_in_executor(None, router.handle, chat_id, text))
+                loop.run_in_executor(None, handle_fn, chat_id, text))
             while not task.done():
                 await asyncio.sleep(4.0)
                 if not task.done():

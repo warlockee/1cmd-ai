@@ -130,9 +130,10 @@ def _build_system_prompt(
     memories: list[tuple[int, str, str]] | None = None,
     summary: str | None = None,
     sop: str = "",
+    base_override: str | None = None,
 ) -> str:
     """Assemble the full system prompt from base + memories + summary + SOP."""
-    prompt = _load_system_prompt()
+    prompt = base_override if base_override else _load_system_prompt()
     if memories:
         total = len(memories)
         # Only include the most recent N memories (list is ORDER BY id ASC)
@@ -276,10 +277,12 @@ class Agent:
         backend: Any,
         config: Any,
         notify_fn: NotifyFn,
+        system_prompt_override: str | None = None,
     ) -> None:
         self._backend = backend
         self._config = config
         self._notify = notify_fn
+        self._system_prompt_override = system_prompt_override
         self.debug = False
 
         # Provider manager handles LLM creation + fallback
@@ -368,7 +371,10 @@ class Agent:
         memories = memory.list_for_chat(chat_id)
         chat_summary = self._summaries.get(chat_id)
         sop = ensure_sop()
-        system_prompt = _build_system_prompt(memories, chat_summary, sop)
+        system_prompt = _build_system_prompt(
+            memories, chat_summary, sop,
+            base_override=self._system_prompt_override,
+        )
         if memories:
             logger.info("Loaded %d memories for chat %d", len(memories), chat_id)
 

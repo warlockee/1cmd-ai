@@ -42,11 +42,17 @@ class ManagerRouter:
         self._notify_fn = notify_fn
         self._active = False
         self._agent = None  # Lazy init
+        self._ceo_active = False
+        self._ceo_agent = None  # Lazy init
         self.debug = False
 
     @property
     def active(self) -> bool:
         return self._active
+
+    @property
+    def ceo_active(self) -> bool:
+        return self._ceo_active
 
     def activate(self) -> str:
         """Enter manager mode. Returns status message."""
@@ -61,14 +67,38 @@ class ManagerRouter:
                 "Then restart onecmd."
             )
         self._active = True
+        self._ceo_active = False
         logger.info("Manager mode activated")
         return "Manager mode ON. Send messages to the AI agent. Use .exit to leave."
+
+    def activate_ceo(self) -> str:
+        """Enter CEO mode. Returns status message."""
+        if self._ceo_agent is None:
+            self._init_ceo_agent()
+        if self._ceo_agent is None:
+            return (
+                "CEO unavailable — no LLM API key.\n\n"
+                "Set one of these environment variables:\n"
+                "<code>GOOGLE_API_KEY</code> — Gemini (recommended)\n"
+                "<code>ANTHROPIC_API_KEY</code> — Claude\n\n"
+                "Then restart onecmd."
+            )
+        self._ceo_active = True
+        self._active = False
+        logger.info("CEO mode activated")
+        return "CEO mode ON."
 
     def deactivate(self) -> str:
         """Exit manager mode. Returns status message."""
         self._active = False
         logger.info("Manager mode deactivated")
         return "Manager mode OFF."
+
+    def deactivate_ceo(self) -> str:
+        """Exit CEO mode. Returns status message."""
+        self._ceo_active = False
+        logger.info("CEO mode deactivated")
+        return "CEO mode OFF."
 
     def handle(self, chat_id: int, text: str) -> str | None:
         """Route a message to the agent. Returns response or None."""
@@ -83,15 +113,33 @@ class ManagerRouter:
             logger.exception("Agent error")
             return "Error processing your message. Try again."
 
+    def handle_ceo(self, chat_id: int, text: str) -> str | None:
+        """Route a message to the CEO agent. Returns response or None."""
+        if not self._ceo_active or self._ceo_agent is None:
+            return None
+        if not text or not text.strip():
+            return None
+        try:
+            self._ceo_agent.debug = self.debug
+            return self._ceo_agent.handle_message(chat_id, text)
+        except Exception:
+            logger.exception("CEO agent error")
+            return "Error processing your message. Try again."
+
     def health(self) -> dict:
         """Return manager health info."""
-        info = {"active": self._active, "agent_initialized": self._agent is not None}
+        info = {
+            "active": self._active,
+            "agent_initialized": self._agent is not None,
+            "ceo_active": self._ceo_active,
+            "ceo_initialized": self._ceo_agent is not None,
+        }
         if self._agent is not None and hasattr(self._agent, "health"):
             info.update(self._agent.health())
         return info
 
     def _init_agent(self):
-        """Lazy-initialize the agent."""
+        """Lazy-initialize the manager agent."""
         if not self._config.has_llm_key:
             logger.warning("No LLM API key — manager disabled")
             return
@@ -107,3 +155,26 @@ class ManagerRouter:
         except Exception:
             logger.exception("Failed to initialize manager agent")
             self._agent = None
+
+    def _init_ceo_agent(self):
+        """Lazy-initialize the CEO agent."""
+        if not self._config.has_llm_key:
+            logger.warning("No LLM API key — CEO disabled")
+            return
+        try:
+            from pathlib import Path
+            from onecmd.manager.agent import Agent
+
+            prompt_path = Path(__file__).parent / "ceo_prompt.md"
+            ceo_prompt = prompt_path.read_text().rstrip()
+
+            self._ceo_agent = Agent(
+                backend=self._backend,
+                config=self._config,
+                notify_fn=self._notify_fn,
+                system_prompt_override=ceo_prompt,
+            )
+            logger.info("CEO agent initialized")
+        except Exception:
+            logger.exception("Failed to initialize CEO agent")
+            self._ceo_agent = None
