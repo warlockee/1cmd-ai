@@ -215,10 +215,13 @@ class SmartTask:
         return (f"You are monitoring a terminal. Goal: {self.prompt}\n\n"
             "Each message has BEFORE/AFTER snapshots. Use tools to decide:\n"
             "continue_monitoring | task_complete | notify_user | send_to_terminal\n\n"
-            "STUCK DETECTION: If AFTER shows text typed at a prompt but not "
-            "submitted (the prompt line got longer but no new output appeared), "
-            "send Enter via send_to_terminal with keys=\"\\n\". This is common "
-            "on laggy terminals where the Enter key didn't register.\n\n"
+            "STUCK DETECTION: ONLY send Enter (keys=\"\\n\") if you see text "
+            "typed at a shell prompt (like ❯ or $) that was NOT submitted — "
+            "the prompt line got longer but no command output followed. "
+            "Do NOT send Enter when a command is already running (output is "
+            "scrolling, or the terminal shows no prompt). A quiet terminal "
+            "with no prompt means the command is still executing — just "
+            "continue_monitoring.\n\n"
             "Keep messages concise, plain text only.")
 
     def _trim_history(self) -> None:
@@ -303,7 +306,9 @@ class SmartTask:
                     self._notify(f"Smart task #{self.task_id}: {msg}")
                 results.append((tu_id, name, "User notified."))
             elif name == "send_to_terminal":
-                keys, msg = args.get("keys", ""), args.get("message", "Sending keys.")
+                from onecmd.manager.tools import _decode_escapes
+                keys = _decode_escapes(args.get("keys", ""))
+                msg = args.get("message", "Sending keys.")
                 logger.info("SmartTask #%d send_to_terminal: %s", self.task_id, msg)
                 if keys:
                     _send_with_enter(self._backend, self.terminal_id,

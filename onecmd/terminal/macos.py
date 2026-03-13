@@ -28,6 +28,7 @@ Guarding:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 import Quartz  # type: ignore[import-untyped]
@@ -337,6 +338,10 @@ class MacOSBackend:
       danger_mode: bool — if True, bypass terminal app filter (NOT PID filter)
     """
 
+    # Global lock: CGEvent keystrokes go to the frontmost window, so
+    # concurrent send_keys calls would interleave characters.
+    _send_lock = threading.Lock()
+
     def __init__(self, parent_pid: int | None, danger_mode: bool) -> None:
         self._parent_pid = parent_pid
         self._danger_mode = danger_mode
@@ -542,56 +547,59 @@ class MacOSBackend:
             return False
         pid, target_wid = entry
 
-        # Raise the target window
-        _raise_window_by_id(pid, target_wid)
+        with self._send_lock:
+            log.debug("send_keys %s: %r", term_id, text)
 
-        i = 0
-        while i < len(text):
-            ch = text[i]
-            code = ord(ch)
+            # Raise the target window
+            _raise_window_by_id(pid, target_wid)
 
-            # Escape (0x1b) — if followed by another char, treat as Alt+char
-            if code == 0x1B:
-                if i + 1 < len(text):
-                    nxt = text[i + 1]
-                    mapped = _keycode_for_char(nxt)
-                    if mapped is not None:
-                        _send_key(pid, mapped, nxt, _MOD_ALT)
+            i = 0
+            while i < len(text):
+                ch = text[i]
+                code = ord(ch)
+
+                # Escape (0x1b) — if followed by another char, treat as Alt+char
+                if code == 0x1B:
+                    if i + 1 < len(text):
+                        nxt = text[i + 1]
+                        mapped = _keycode_for_char(nxt)
+                        if mapped is not None:
+                            _send_key(pid, mapped, nxt, _MOD_ALT)
+                        else:
+                            _send_key(pid, 0, nxt, _MOD_ALT)
+                        i += 2
                     else:
-                        _send_key(pid, 0, nxt, _MOD_ALT)
-                    i += 2
-                else:
-                    # Bare Escape
-                    _send_key(pid, _VK_ESCAPE, None, 0)
+                        # Bare Escape
+                        _send_key(pid, _VK_ESCAPE, None, 0)
+                        i += 1
+                    continue
+
+                # Enter (newline)
+                if ch == "\n":
+                    _send_key(pid, _VK_RETURN, None, 0)
                     i += 1
-                continue
+                    continue
 
-            # Enter (newline)
-            if ch == "\n":
-                _send_key(pid, _VK_RETURN, None, 0)
+                # Tab
+                if ch == "\t":
+                    _send_key(pid, _VK_TAB, None, 0)
+                    i += 1
+                    continue
+
+                # Ctrl+A (0x01) through Ctrl+Z (0x1a)
+                if 1 <= code <= 26:
+                    ctrl_ch = chr(code + 64)  # 0x01 -> 'A', 0x03 -> 'C', etc.
+                    mapped = _keycode_for_char(ctrl_ch)
+                    if mapped is not None:
+                        _send_key(pid, mapped, ctrl_ch, _MOD_CTRL)
+                    else:
+                        _send_key(pid, 0, ctrl_ch, _MOD_CTRL)
+                    i += 1
+                    continue
+
+                # Regular printable character
+                _send_key(pid, 0, ch, 0)
                 i += 1
-                continue
-
-            # Tab
-            if ch == "\t":
-                _send_key(pid, _VK_TAB, None, 0)
-                i += 1
-                continue
-
-            # Ctrl+A (0x01) through Ctrl+Z (0x1a)
-            if 1 <= code <= 26:
-                ctrl_ch = chr(code + 64)  # 0x01 -> 'A', 0x03 -> 'C', etc.
-                mapped = _keycode_for_char(ctrl_ch)
-                if mapped is not None:
-                    _send_key(pid, mapped, ctrl_ch, _MOD_CTRL)
-                else:
-                    _send_key(pid, 0, ctrl_ch, _MOD_CTRL)
-                i += 1
-                continue
-
-            # Regular printable character
-            _send_key(pid, 0, ch, 0)
-            i += 1
 
         return True
 

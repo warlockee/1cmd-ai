@@ -370,7 +370,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
 
     router = ManagerRouter(backend, config, _notify_sync)
 
-    _ROUTER_CMDS = {".mgr", ".exit", ".health"}
+    _ROUTER_CMDS = {".mgr", ".exit", ".health", ".debug"}
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot = context.bot

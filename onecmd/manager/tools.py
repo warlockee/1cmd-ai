@@ -162,6 +162,11 @@ def _write_aliases(aliases: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _decode_escapes(text: str) -> str:
+    """Convert literal \\n and \\t from LLM output to real characters."""
+    return text.replace("\\n", "\n").replace("\\t", "\t")
+
+
 def _truncate(text: str, limit: int = _MAX_RESULT_CHARS) -> str:
     if len(text) <= limit:
         return text
@@ -245,7 +250,7 @@ def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     backend: _Backend = ctx["backend"]
     queue_cls = ctx["queue_cls"]
     tid: str = args["terminal_id"]
-    keys: str = args["keys"]
+    keys: str = _decode_escapes(args["keys"])
     description: str = args["description"]
     stable_seconds: float = args.get("stable_seconds", 5.0)
 
@@ -316,7 +321,7 @@ def tool_start_bg_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 
     task = BackgroundTask(
         terminal_id=args["terminal_id"],
-        send_text=args.get("send_text", ""),
+        send_text=_decode_escapes(args.get("send_text", "")),
         check_contains=args["check_contains"],
         description=args["description"],
         poll_interval=args.get("poll_interval", 10),
@@ -369,7 +374,7 @@ def tool_start_smart_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
         chat_fn=ctx["chat_fn"],
         format_results_fn=ctx["format_results_fn"],
         prompt=args["prompt"],
-        send_text=args.get("send_text", ""),
+        send_text=_decode_escapes(args.get("send_text", "")),
         poll_interval=args.get("poll_interval", 10),
         max_iterations=args.get("max_iterations", 100),
         debug=ctx.get("debug", False),
