@@ -232,7 +232,7 @@ def create_connector_handler(config: Config, store: Store,
 
     router = ManagerRouter(backend, config, _notify_compat)
 
-    _ROUTER_CMDS = {".mgr", ".exit", ".health"}
+    _ROUTER_CMDS = {".mgr", ".ceo", ".exit", ".health"}
 
     async def message_handler(connector: Connector, chat_id: str,
                               user_id: str, text: str,
@@ -378,26 +378,55 @@ def create_connector_handler(config: Config, store: Store,
                     await connector.send_message(chat_id, msg)
                     return
                 s.mgr_mode = True
+                s._ceo_mode = False
                 await connector.send_message(
                     chat_id,
                     "\U0001f916 Manager mode on.\n"
                     "Dot commands still work: .list .1 .exit")
             else:
                 s.mgr_mode = False
+                s._ceo_mode = False
                 router.deactivate()
                 await connector.send_message(
                     chat_id, "Manager mode off.")
             return
 
+        if cmd_key == ".ceo":
+            if not s.mgr_mode or not getattr(s, '_ceo_mode', False):
+                msg = router.activate_ceo()
+                if not router.ceo_active:
+                    await connector.send_message(chat_id, msg)
+                    return
+                s.mgr_mode = True
+                s._ceo_mode = True
+                await connector.send_message(
+                    chat_id,
+                    "\U0001f3e2 CEO mode on.\n"
+                    "Describe what you want to build.\n"
+                    "Dot commands still work: .list .1 .exit")
+            else:
+                s.mgr_mode = False
+                s._ceo_mode = False
+                router.deactivate_ceo()
+                await connector.send_message(
+                    chat_id, "CEO mode off.")
+            return
+
         if cmd_key == ".exit":
-            if s.mgr_mode:
+            if getattr(s, '_ceo_mode', False):
+                s._ceo_mode = False
+                s.mgr_mode = False
+                router.deactivate_ceo()
+                await connector.send_message(
+                    chat_id, "CEO mode off.")
+            elif s.mgr_mode:
                 s.mgr_mode = False
                 router.deactivate()
                 await connector.send_message(
                     chat_id, "Manager mode off.")
             else:
                 await connector.send_message(
-                    chat_id, "Not in manager mode.")
+                    chat_id, "Not in manager or CEO mode.")
             return
 
         if cmd_key == ".health":
@@ -454,13 +483,14 @@ def create_connector_handler(config: Config, store: Store,
             await _show_terminal(connector, chat_id, t.id, s, backend, config)
             return
 
-        # 6. Manager mode
+        # 6. CEO / Manager mode
         if s.mgr_mode and not text.startswith("."):
             if not text.strip():
                 return
             await connector.send_chat_action(chat_id)
+            ceo = getattr(s, '_ceo_mode', False)
+            handle_fn = router.handle_ceo if ceo else router.handle
             loop = asyncio.get_event_loop()
-            # Route to LLM agent
             # Use int chat_id for backward compat with router
             try:
                 chat_id_int = int(chat_id)
@@ -468,7 +498,7 @@ def create_connector_handler(config: Config, store: Store,
                 chat_id_int = hash(chat_id)
             task = asyncio.ensure_future(
                 loop.run_in_executor(
-                    None, router.handle, chat_id_int, text))
+                    None, handle_fn, chat_id_int, text))
             while not task.done():
                 await asyncio.sleep(4.0)
                 if not task.done():

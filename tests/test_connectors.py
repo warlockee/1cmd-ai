@@ -275,4 +275,4 @@ class TestConnectorHandler:
         msg_h, _, reg_fn, *_ = self._make_handler()
         reg_fn(connector)
         await msg_h(connector, "100", "12345", ".exit", None)
-        assert "Not in manager mode" in connector.sent_messages[0][1]
+        assert "Not in manager or CEO mode" in connector.sent_messages[0][1]

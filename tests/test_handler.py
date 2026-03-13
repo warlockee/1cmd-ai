@@ -290,7 +290,7 @@ class TestExitCommand:
         _run(handler(update, _make_context(bot)))
 
         text_sent = bot.send_message.call_args[1]["text"]
-        assert "Not in manager mode" in text_sent
+        assert "Not in manager or CEO mode" in text_sent
 
 
 class TestMgrCommand:
