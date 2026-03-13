@@ -1,6 +1,6 @@
 [project]
 name = "onecmd"
-version = "0.5.4"
+version = "0.5.5"
 description = "AI-powered terminal manager — control and automate your machines from Telegram"
 readme = "README.md"
 license = "MIT"
