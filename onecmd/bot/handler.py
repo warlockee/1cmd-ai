@@ -221,6 +221,15 @@ async def _cmd_mgr(bot, chat_id, _text, s, _backend, _store, _config, router=Non
         await send_message(bot, chat_id, "Manager mode off.")
 
 
+async def _cmd_debug(bot, chat_id, _text, s, _backend, _store, _config, router=None):
+    if router:
+        router.debug = not router.debug
+        state = "ON" if router.debug else "OFF"
+        await send_message(bot, chat_id, f"Debug mode {state}.")
+    else:
+        await send_message(bot, chat_id, "Manager not available.")
+
+
 async def _cmd_exit(bot, chat_id, _text, s, _backend, _store, _config, router=None):
     if s.mgr_mode:
         s.mgr_mode = False
@@ -303,6 +312,7 @@ COMMANDS: dict[str, CmdFn] = {
     ".list": _cmd_list,
     ".new": _cmd_new,
     ".mgr": _cmd_mgr,
+    ".debug": _cmd_debug,
     ".exit": _cmd_exit,
     ".help": _cmd_help,
     ".health": _cmd_health,

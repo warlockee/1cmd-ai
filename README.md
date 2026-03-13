@@ -54,7 +54,9 @@ Send `.mgr` to enter manager mode. Your messages go to the AI agent, which can s
 - Run repeating background tasks ("watch this terminal until X happens")
 - Detect and recover stuck terminals (Smart Diff — probe, compare before/after)
 - Summarize long conversations to preserve context within token limits
-- Auto-fallback between Gemini and Claude on rate limits
+- Auto-fallback between Gemini and Claude on rate limits, timeouts, and errors
+- Anti-stuck detection: automatically recovers when Enter key doesn't register on laggy terminals
+- Smart task results feed back to the AI for intelligent summaries instead of raw output
 - Remember things across restarts (persistent memory)
 
 ### Providers
@@ -89,6 +91,7 @@ Custom rules are appended to the default SOP automatically — no need to edit t
 |---------|--------|
 | `.mgr` | Enter AI manager mode |
 | `.exit` | Leave manager mode |
+| `.debug` | Toggle verbose smart task output |
 | `.health` | Manager health report (uptime, memory, stats) |
 
 ## Manual Mode

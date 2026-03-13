@@ -207,3 +207,4 @@ class TerminalQueue:
             logger.error("Command execution error on %s: %s", self.terminal_id, e)
             if on_complete:
                 on_complete(f"Command error: {e}")
+

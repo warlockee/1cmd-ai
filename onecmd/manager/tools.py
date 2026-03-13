@@ -307,13 +307,14 @@ def tool_start_bg_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     chat_id: int = ctx["chat_id"]
     backend: _Backend = ctx["backend"]
     notify = ctx["notify"]
-    next_id: Callable[[], int] = ctx["next_task_id"]
 
     from onecmd.manager.tasks import BackgroundTask
 
+    # Tasks call notify(text) — bind chat_id
+    def task_notify(text: str) -> None:
+        notify(chat_id, text)
+
     task = BackgroundTask(
-        task_id=next_id(),
-        chat_id=chat_id,
         terminal_id=args["terminal_id"],
         send_text=args.get("send_text", ""),
         check_contains=args["check_contains"],
@@ -321,7 +322,7 @@ def tool_start_bg_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
         poll_interval=args.get("poll_interval", 10),
         max_iterations=args.get("max_iterations", 100),
         backend=backend,
-        notify=notify,
+        notify=task_notify,
     )
     with tasks_lock:
         tasks[task.task_id] = task
@@ -344,19 +345,35 @@ def tool_start_smart_task(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     tasks_lock: threading.Lock = ctx["tasks_lock"]
     backend: _Backend = ctx["backend"]
     notify = ctx["notify"]
+    chat_id = ctx["chat_id"]
 
     from onecmd.manager.tasks import SmartTask
+
+    handle_task_result = ctx.get("handle_task_result")
+
+    # SmartTask calls notify(text) — bind chat_id
+    def task_notify(text: str) -> None:
+        notify(chat_id, text)
+
+    # Feed completion back to agent for analysis
+    def on_complete(result: str) -> None:
+        if handle_task_result:
+            handle_task_result(chat_id, result)
+        else:
+            notify(chat_id, result)
 
     task = SmartTask(
         terminal_id=args["terminal_id"],
         backend=backend,
-        notify=notify,
+        notify=task_notify,
         chat_fn=ctx["chat_fn"],
         format_results_fn=ctx["format_results_fn"],
         prompt=args["prompt"],
         send_text=args.get("send_text", ""),
         poll_interval=args.get("poll_interval", 10),
         max_iterations=args.get("max_iterations", 100),
+        debug=ctx.get("debug", False),
+        on_complete=on_complete,
     )
     with tasks_lock:
         tasks[task.task_id] = task
@@ -575,7 +592,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "input_schema": _schema(
          _props(terminal_id="The id value from list_terminals (e.g. '119' or '%0') — NOT the alias name",
                 prompt="Natural language description of what to monitor/achieve",
-                send_text="Optional text to send each iteration before capturing"),
+                send_text="Short text to send to the terminal on the first iteration (sent exactly as-is — keep it brief, no repeating). Leave empty to just monitor."),
          ["terminal_id", "prompt"],
          poll_interval={"type": "integer", "description": "Seconds between iterations (default 10, min 5)"},
          max_iterations={"type": "integer", "description": "Max iterations before giving up (default 100)"})},

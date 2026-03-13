@@ -14,6 +14,7 @@ HELP_TEXT = (
     "<code>.rename N name</code> — name a terminal\n"
     "<code>.mgr</code> — AI manager mode\n"
     "<code>.exit</code> — leave manager mode\n"
+    "<code>.debug</code> — toggle verbose smart task output\n"
     "<code>.health</code> — health report\n"
     "<code>.help</code> — this help\n\n"
     "<b>Once connected</b>, text is sent as keystrokes.\n"

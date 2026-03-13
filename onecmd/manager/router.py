@@ -42,6 +42,7 @@ class ManagerRouter:
         self._notify_fn = notify_fn
         self._active = False
         self._agent = None  # Lazy init
+        self.debug = False
 
     @property
     def active(self) -> bool:
@@ -76,6 +77,7 @@ class ManagerRouter:
         if not text or not text.strip():
             return None
         try:
+            self._agent.debug = self.debug
             return self._agent.handle_message(chat_id, text)
         except Exception:
             logger.exception("Agent error")
