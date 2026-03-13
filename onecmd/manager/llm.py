@@ -488,18 +488,30 @@ class ProviderManager:
         return self._active_key
 
     def switch_on_rate_limit(self) -> bool:
-        """Switch to fallback provider. Returns True if fallback available."""
+        """Switch to fallback provider with cooldown. Returns True if fallback available."""
+        return self._switch_to_fallback(
+            reason="rate limited",
+            cooldown=_RATE_LIMIT_COOLDOWN,
+        )
+
+    def switch_on_error(self) -> bool:
+        """Switch to fallback provider temporarily (no cooldown). Returns True if fallback available."""
+        return self._switch_to_fallback(
+            reason="API error",
+            cooldown=60,  # Short cooldown — try primary again soon
+        )
+
+    def _switch_to_fallback(self, reason: str, cooldown: int) -> bool:
         if not self._fallback_key:
-            logger.warning("Rate limited but no fallback provider available")
+            logger.warning("%s on %s but no fallback provider available",
+                           reason, self._active_key)
             return False
         logger.warning(
-            "Rate limited on %s, switching to %s for %ds",
-            self._active_key,
-            self._fallback_key,
-            _RATE_LIMIT_COOLDOWN,
+            "%s on %s, switching to %s for %ds",
+            reason, self._active_key, self._fallback_key, cooldown,
         )
         self._active_key = self._fallback_key
-        self._cooldown_until = time.time() + _RATE_LIMIT_COOLDOWN
+        self._cooldown_until = time.time() + cooldown
         if self._active_key not in self._providers:
             self._providers[self._active_key] = PROVIDERS[self._active_key]()
         return True

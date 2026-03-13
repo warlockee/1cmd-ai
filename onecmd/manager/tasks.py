@@ -61,14 +61,27 @@ def _has_pending(baseline: str, output: str) -> bool:
 
 def _send_with_enter(backend: _Backend, tid: str, text: str,
                      cancel: threading.Event, task_label: str) -> None:
-    """Send text, wait for stability, auto-enter if pending command detected."""
+    """Send text, wait for it to appear, then send Enter separately.
+
+    On laggy terminals, sending text + \\n in one call often loses the Enter.
+    Always split: send text → wait → send Enter → wait.
+    """
+    # Strip any trailing newlines — we'll send Enter separately
+    text = text.rstrip("\n")
+    if not text:
+        # Just an Enter
+        pre = backend.capture(tid) or ""
+        backend.send_keys(tid, "\n")
+        _wait_stable(backend, tid, cancel, baseline=pre)
+        return
     pre = backend.capture(tid) or ""
     backend.send_keys(tid, text)
     post = _wait_stable(backend, tid, cancel, baseline=pre)
-    if _has_pending(pre, post):
-        logger.info("%s: pending command, sending Enter", task_label)
-        backend.send_keys(tid, "\n")
-        _wait_stable(backend, tid, cancel, baseline=post)
+    if cancel.is_set():
+        return
+    logger.info("%s: sending Enter separately", task_label)
+    backend.send_keys(tid, "\n")
+    _wait_stable(backend, tid, cancel, baseline=post)
 
 
 class BackgroundTask:
@@ -168,9 +181,13 @@ class SmartTask:
                  chat_fn: ChatFn, format_results_fn: FormatResultsFn,
                  prompt: str, description: str = "", send_text: str = "",
                  poll_interval: int = DEFAULT_POLL_INTERVAL,
-                 max_iterations: int = MAX_ITERATIONS) -> None:
+                 max_iterations: int = MAX_ITERATIONS,
+                 debug: bool = False,
+                 on_complete: Callable[[str], None] | None = None) -> None:
         self.task_id = _next_task_id()
         self.terminal_id, self._backend, self._notify = terminal_id, backend, notify
+        self._debug = debug
+        self._on_complete = on_complete
         self._chat_fn, self._fmt = chat_fn, format_results_fn
         self.prompt = prompt
         self.description = description or prompt[:80]
@@ -197,7 +214,11 @@ class SmartTask:
     def _system_prompt(self) -> str:
         return (f"You are monitoring a terminal. Goal: {self.prompt}\n\n"
             "Each message has BEFORE/AFTER snapshots. Use tools to decide:\n"
-            "continue_monitoring | task_complete | notify_user | send_to_terminal\n"
+            "continue_monitoring | task_complete | notify_user | send_to_terminal\n\n"
+            "STUCK DETECTION: If AFTER shows text typed at a prompt but not "
+            "submitted (the prompt line got longer but no new output appeared), "
+            "send Enter via send_to_terminal with keys=\"\\n\". This is common "
+            "on laggy terminals where the Enter key didn't register.\n\n"
             "Keep messages concise, plain text only.")
 
     def _trim_history(self) -> None:
@@ -221,7 +242,7 @@ class SmartTask:
                         f"Smart task #{self.task_id} timed out after "
                         f"{self.iterations} iterations: {self.description}")
                 before = self._capture_tail()
-                if self.send_text:
+                if self.send_text and self.iterations == 0:
                     _send_with_enter(self._backend, self.terminal_id,
                                      self.send_text, self._cancel,
                                      f"SmartTask #{self.task_id}")
@@ -267,21 +288,29 @@ class SmartTask:
                 self.status = "completed"
                 self.finished_at = time.time()
                 elapsed = int(self.finished_at - self.started_at)
+                result = (f"Smart task #{self.task_id} complete "
+                          f"({self.iterations} iterations, {elapsed}s): {msg}")
                 logger.info("SmartTask #%d completed: %s", self.task_id, msg)
-                self._notify(f"Smart task #{self.task_id} complete "
-                             f"({self.iterations} iterations, {elapsed}s): {msg}")
+                if self._on_complete:
+                    self._on_complete(result)
+                else:
+                    self._notify(result)
                 return False
             elif name == "notify_user":
                 msg = args.get("message", "Alert from smart task.")
                 logger.info("SmartTask #%d notify: %s", self.task_id, msg)
-                self._notify(f"Smart task #{self.task_id}: {msg}")
+                if self._debug:
+                    self._notify(f"Smart task #{self.task_id}: {msg}")
                 results.append((tu_id, name, "User notified."))
             elif name == "send_to_terminal":
                 keys, msg = args.get("keys", ""), args.get("message", "Sending keys.")
                 logger.info("SmartTask #%d send_to_terminal: %s", self.task_id, msg)
                 if keys:
-                    self._backend.send_keys(self.terminal_id, keys)
-                self._notify(f"Smart task #{self.task_id}: {msg}")
+                    _send_with_enter(self._backend, self.terminal_id,
+                                     keys, self._cancel,
+                                     f"SmartTask #{self.task_id}")
+                if self._debug:
+                    self._notify(f"Smart task #{self.task_id}: {msg}")
                 results.append((tu_id, name, "Keys sent."))
                 acted = True
             else:
@@ -294,7 +323,10 @@ class SmartTask:
         self.status = "failed"
         self.finished_at = time.time()
         logger.warning(msg)
-        self._notify(msg)
+        if self._on_complete:
+            self._on_complete(msg)
+        else:
+            self._notify(msg)
 
 
 TASK_TYPES: dict[str, type] = {"background": BackgroundTask, "smart": SmartTask}

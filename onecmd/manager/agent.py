@@ -68,6 +68,14 @@ _ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(.+?)_(?!\w)")
 _HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
 
 
+_TRAILING_FILLER_RE = re.compile(
+    r"\s*(?:is that all|anything else|need anything|want anything|"
+    r"let me know if|do you need|shall i|would you like|can i help"
+    r")[\s\S]{0,30}$",
+    re.IGNORECASE,
+)
+
+
 def strip_markdown(text: str) -> str:
     """Remove common markdown formatting from LLM output for plain-text display."""
     text = _CODE_BLOCK_RE.sub(lambda m: m.group()[3:].lstrip().rsplit("```", 1)[0], text)
@@ -76,6 +84,7 @@ def strip_markdown(text: str) -> str:
     text = _ITALIC_STAR_RE.sub(r"\1", text)
     text = _ITALIC_UNDER_RE.sub(r"\1", text)
     text = _HEADING_RE.sub("", text)
+    text = _TRAILING_FILLER_RE.sub("", text)
     return text
 
 
@@ -227,6 +236,29 @@ def _is_rate_limit_error(e: Exception) -> bool:
     return False
 
 
+def _is_retriable_error(e: Exception) -> bool:
+    """Check if an exception is retriable on the fallback provider.
+
+    Covers: rate limits, timeouts, connection errors, server errors (5xx).
+    """
+    if _is_rate_limit_error(e):
+        return True
+    etype = type(e).__name__
+    msg = str(e).lower()
+    # Timeouts
+    if "timeout" in etype.lower() or "timed out" in msg or "timeout" in msg:
+        return True
+    # Connection errors
+    if "connection" in etype.lower() or "connection" in msg:
+        return True
+    # Server errors (5xx)
+    if "500" in msg or "502" in msg or "503" in msg or "overloaded" in msg:
+        return True
+    if "InternalServerError" in etype or "APIError" in etype:
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
@@ -248,6 +280,7 @@ class Agent:
         self._backend = backend
         self._config = config
         self._notify = notify_fn
+        self.debug = False
 
         # Provider manager handles LLM creation + fallback
         self._providers = ProviderManager(primary=None)
@@ -280,6 +313,26 @@ class Agent:
             return "Still processing your previous request. Please wait a moment."
         try:
             return strip_markdown(self._handle_locked(chat_id, text))
+        finally:
+            lock.release()
+
+    def handle_task_result(self, chat_id: int, result: str) -> None:
+        """Feed a SmartTask result back into the agent for analysis.
+
+        The agent processes the result and sends its response to the user.
+        Called from SmartTask's on_complete callback (background thread).
+        """
+        lock = self._get_chat_lock(chat_id)
+        acquired = lock.acquire(timeout=30)
+        if not acquired:
+            self._notify(chat_id, result)
+            return
+        try:
+            reply = strip_markdown(self._handle_locked(chat_id, result))
+            self._notify(chat_id, reply)
+        except Exception as e:
+            logger.error("Task result handling error: %s", e)
+            self._notify(chat_id, result)
         finally:
             lock.release()
 
@@ -345,22 +398,24 @@ class Agent:
                         model, system_prompt, TOOL_SCHEMAS, conv,
                         max_tokens=provider.default_max_tokens)
                 except Exception as api_err:
-                    if _is_rate_limit_error(api_err):
-                        if self._providers.switch_on_rate_limit():
-                            provider = self._providers.active
-                            model = self._resolve_model()
-                            prev_name = self._providers.active_name
-                            provider.convert_conversation(conv)
-                            self._notify(
-                                chat_id,
-                                f"Switched to {prev_name} (rate limit).")
-                            serialized, text_parts, tool_uses, stop = \
-                                provider.chat(model, system_prompt,
-                                              TOOL_SCHEMAS, conv, max_tokens=8192)
-                        else:
-                            raise
-                    else:
+                    if not _is_retriable_error(api_err):
                         raise
+                    is_rate_limit = _is_rate_limit_error(api_err)
+                    switched = (self._providers.switch_on_rate_limit()
+                                if is_rate_limit
+                                else self._providers.switch_on_error())
+                    if not switched:
+                        raise
+                    provider = self._providers.active
+                    model = self._resolve_model()
+                    prev_name = self._providers.active_name
+                    provider.convert_conversation(conv)
+                    reason = "rate limit" if is_rate_limit else type(api_err).__name__
+                    self._notify(chat_id, f"Switched to {prev_name} ({reason}).")
+                    serialized, text_parts, tool_uses, stop = \
+                        provider.chat(model, system_prompt,
+                                      TOOL_SCHEMAS, conv,
+                                      max_tokens=provider.default_max_tokens)
 
                 conv.append({"role": "assistant", "content": serialized})
 
@@ -394,7 +449,7 @@ class Agent:
         if self._config.mgr_model:
             return self._config.mgr_model
         name = self._providers.active_name
-        defaults = {"google": "gemini-2.5-flash", "anthropic": "claude-sonnet-4-20250514"}
+        defaults = {"google": "gemini-3-flash-preview", "anthropic": "claude-sonnet-4-20250514"}
         return defaults.get(name, "claude-sonnet-4-20250514")
 
     def _build_tool_ctx(self, chat_id: int) -> dict[str, Any]:
@@ -415,6 +470,8 @@ class Agent:
             "tasks_lock": self._tasks_lock,
             "chat_id": chat_id,
             "notify": self._notify,
+            "debug": self.debug,
+            "handle_task_result": self.handle_task_result,
             "llm_client": provider,
             "llm_model": model,
             "chat_fn": chat_fn,
