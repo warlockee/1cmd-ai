@@ -206,6 +206,30 @@ GOOGLE_API_KEY=... .venv/bin/onecmd --apikey YOUR_BOT_TOKEN
 .venv/bin/onecmd --apikey YOUR_BOT_TOKEN
 ```
 
+### Run as a user systemd service (Linux)
+
+For persistent background run with auto-restart:
+
+```bash
+cd ~/tools/1cmd-ai
+./install-user-service.sh
+```
+
+Service commands:
+
+```bash
+systemctl --user status onecmd.service
+journalctl --user -u onecmd.service -f
+systemctl --user restart onecmd.service
+systemctl --user stop onecmd.service
+```
+
+Optional (start even when not logged in):
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
 ## Security
 
 - **Owner lock**: The first Telegram user to message the bot becomes the owner. All other users are ignored.

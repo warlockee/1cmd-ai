@@ -1,0 +1,24 @@
+[Unit]
+Description=OneCmd Telegram terminal manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/tools/1cmd-ai
+EnvironmentFile=%h/tools/1cmd-ai/.env
+ExecStart=%h/tools/1cmd-ai/.venv/bin/onecmd --apikey ${TELEGRAM_BOT_TOKEN}
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+# Hardening (safe defaults for user service)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/tools/1cmd-ai %h/.onecmd
+
+[Install]
+WantedBy=default.target
