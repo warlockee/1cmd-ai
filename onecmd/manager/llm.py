@@ -586,14 +586,22 @@ def _to_codex_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _to_codex_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+
+    def _text_type_for_role(role: str) -> str:
+        # Codex responses API expects assistant history as output_text,
+        # user history as input_text.
+        return "output_text" if role == "assistant" else "input_text"
+
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
+        text_type = _text_type_for_role(role)
+
         if isinstance(content, str):
             out.append(
                 {
                     "role": role,
-                    "content": [{"type": "input_text", "text": content}],
+                    "content": [{"type": text_type, "text": content}],
                 }
             )
             continue
@@ -605,8 +613,9 @@ def _to_codex_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     continue
                 btype = block.get("type")
                 if btype == "text":
-                    parts.append({"type": "input_text", "text": block.get("text", "")})
+                    parts.append({"type": text_type, "text": block.get("text", "")})
                 elif btype == "tool_result":
+                    # tool_result entries are user-originated follow-up context
                     parts.append(
                         {
                             "type": "input_text",
