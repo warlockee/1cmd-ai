@@ -17,7 +17,7 @@ if [[ ! -x "$ROOT_DIR/.venv/bin/onecmd" ]]; then
 fi
 
 mkdir -p "$UNIT_DIR"
-cp "$UNIT_SRC" "$UNIT_DST"
+sed "s#@ROOT_DIR@#$ROOT_DIR#g" "$UNIT_SRC" > "$UNIT_DST"
 
 systemctl --user daemon-reload
 systemctl --user enable --now onecmd.service
