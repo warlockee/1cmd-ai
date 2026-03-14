@@ -7,9 +7,12 @@ Calling spec:
   Side effects: reads apikey.txt if --apikey not provided
 
 Env vars read:
-  ANTHROPIC_API_KEY   - Anthropic LLM key
-  GOOGLE_API_KEY      - Google LLM key
-  ONECMD_MGR_MODEL    - Override LLM model name
+  ANTHROPIC_API_KEY    - Anthropic LLM key
+  GOOGLE_API_KEY       - Google LLM key
+  ONECMD_MGR_PROVIDER  - Force provider (google|anthropic|openai-codex)
+  ONECMD_MGR_MODEL     - Override LLM model name
+  ONECMD_AUTH_FILE     - Auth profile file path (Codex OAuth)
+  OPENAI_CODEX_TOKEN   - Optional direct Codex access token
   ONECMD_VISIBLE_LINES - Terminal visible lines (int, 10-200)
   ONECMD_SPLIT_MESSAGES - Enable message splitting ("1" or "true")
   ONECMD_ADMIN_PASSWORD - Admin panel password
@@ -48,8 +51,20 @@ class Config(BaseModel, extra="forbid"):
 
     @property
     def has_llm_key(self) -> bool:
-        """True if at least one LLM provider key is configured."""
-        return bool(self.anthropic_api_key or self.google_api_key)
+        """True if at least one LLM provider credential is configured."""
+        if self.anthropic_api_key or self.google_api_key:
+            return True
+        if os.environ.get("OPENAI_CODEX_TOKEN"):
+            return True
+        forced = (os.environ.get("ONECMD_MGR_PROVIDER") or "").strip().lower()
+        if forced in {"codex", "openai-codex", "openai_codex"}:
+            try:
+                from onecmd.auth.codex import has_codex_credentials
+
+                return has_codex_credentials()
+            except Exception:
+                return False
+        return False
 
     @property
     def has_slack(self) -> bool:

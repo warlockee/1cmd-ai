@@ -1,5 +1,5 @@
 """
-onecmd.manager.llm — LLM provider abstraction for Anthropic and Gemini.
+onecmd.manager.llm — LLM provider abstraction for Anthropic, Gemini, and OpenAI Codex.
 
 Calling spec:
   Inputs:  messages (list[dict]), tools (list[dict]), system prompt (str),
@@ -12,18 +12,29 @@ Calling spec:
   Side effects: HTTP calls to Claude/Gemini API
 
 Provider registry:
-  PROVIDERS = {"anthropic": AnthropicProvider, "google": GeminiProvider}
+  PROVIDERS = {
+    "anthropic": AnthropicProvider,
+    "google": GeminiProvider,
+    "openai-codex": CodexProvider,
+  }
 
-Detection: checks env vars ANTHROPIC_API_KEY, GOOGLE_API_KEY
-Preference: Gemini if both available (matches existing behavior)
+Detection:
+  - Explicit override: ONECMD_MGR_PROVIDER
+  - Then env-backed providers (GOOGLE_API_KEY, ANTHROPIC_API_KEY)
+  - Then Codex auth.json / OPENAI_CODEX_* env
+
 Fallback: switches to secondary provider on rate limit (5-minute cooldown)
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
 from typing import Any
+from urllib import error, request
+
+from onecmd.auth.codex import CodexAuthError, ensure_fresh_codex_credentials, has_codex_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +344,143 @@ class GeminiProvider(_Provider):
 
 
 # ---------------------------------------------------------------------------
+# OpenAI Codex provider
+# ---------------------------------------------------------------------------
+
+class CodexProvider(_Provider):
+    name = "openai-codex"
+    default_max_tokens = 32768
+
+    def chat(
+        self,
+        model: str,
+        system: str,
+        tools: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+    ) -> tuple[list[dict[str, Any]], list[str], list[ToolUse], str | None]:
+        creds = ensure_fresh_codex_credentials()
+        token = str(creds.get("access_token"))
+        account_id = str(creds.get("account_id"))
+
+        payload = {
+            "model": model,
+            "store": False,
+            "stream": True,
+            "instructions": system,
+            "input": _to_codex_input(messages),
+            "text": {"verbosity": os.environ.get("ONECMD_CODEX_VERBOSITY", "medium")},
+            "tool_choice": "auto",
+            "parallel_tool_calls": True,
+        }
+        if tools:
+            payload["tools"] = _to_codex_tools(tools)
+
+        req = request.Request(
+            os.environ.get("ONECMD_CODEX_BASE_URL", "https://chatgpt.com/backend-api/codex/responses"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "chatgpt-account-id": account_id,
+                "OpenAI-Beta": "responses=experimental",
+                "originator": "onecmd",
+                "accept": "text/event-stream",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+
+        serialized: list[dict[str, Any]] = []
+        text_parts: list[str] = []
+        stream_deltas: list[str] = []
+        tool_uses: list[ToolUse] = []
+
+        def _append_output_item(item: dict[str, Any]) -> None:
+            typ = item.get("type")
+            if typ == "message":
+                for c in item.get("content", []) or []:
+                    if c.get("type") in ("output_text", "text"):
+                        txt = c.get("text", "")
+                        if txt:
+                            serialized.append({"type": "text", "text": txt})
+                            text_parts.append(txt)
+            elif typ in ("function_call", "tool_call"):
+                tc_id = item.get("call_id") or item.get("id") or f"codex_{len(tool_uses)+1}"
+                name = item.get("name", "unknown")
+                args_raw = item.get("arguments")
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw)
+                    except Exception:
+                        args = {}
+                elif isinstance(args_raw, dict):
+                    args = args_raw
+                else:
+                    args = {}
+                serialized.append({"type": "tool_use", "id": tc_id, "name": name, "input": args})
+                tool_uses.append((tc_id, name, args))
+
+        try:
+            with request.urlopen(req, timeout=120) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="ignore").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        evt = json.loads(data)
+                    except Exception:
+                        continue
+
+                    et = evt.get("type", "")
+                    if et == "response.output_text.delta":
+                        delta = evt.get("delta", "")
+                        if delta:
+                            stream_deltas.append(delta)
+                    elif et == "response.output_item.done":
+                        item = evt.get("item") or {}
+                        if isinstance(item, dict):
+                            _append_output_item(item)
+                    elif et == "response.completed":
+                        response_obj = evt.get("response") or {}
+                        for item in response_obj.get("output", []) or []:
+                            if isinstance(item, dict):
+                                _append_output_item(item)
+        except error.HTTPError as e:
+            msg = e.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Codex API error ({e.code}): {msg}") from e
+        except CodexAuthError as e:
+            raise RuntimeError(f"Codex auth error: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Codex API request failed: {e}") from e
+
+        # If stream only delivered deltas, preserve them as a single text block.
+        if not serialized and stream_deltas:
+            merged = "".join(stream_deltas)
+            serialized.append({"type": "text", "text": merged})
+            text_parts.append(merged)
+
+        stop = "tool_use" if tool_uses else "end_turn"
+        return serialized, text_parts, tool_uses, stop
+
+    def format_tool_results(
+        self,
+        results: list[tuple[str, str, str]],
+    ) -> dict[str, Any]:
+        content: list[dict[str, Any]] = []
+        for tid, name, text in results:
+            content.append({
+                "type": "tool_result",
+                "tool_use_id": tid,
+                "tool_name": name,
+                "content": text,
+            })
+        return {"role": "user", "content": content}
+
+
+# ---------------------------------------------------------------------------
 # Gemini format helpers
 # ---------------------------------------------------------------------------
 
@@ -422,6 +570,54 @@ def _find_tool_name(contents: list[Any], tool_use_id: str) -> str:
     return "unknown"
 
 
+def _to_codex_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for t in tools:
+        out.append(
+            {
+                "type": "function",
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema", {}),
+            }
+        )
+    return out
+
+
+def _to_codex_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            out.append(
+                {
+                    "role": role,
+                    "content": [{"type": "input_text", "text": content}],
+                }
+            )
+            continue
+
+        if isinstance(content, list):
+            parts: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "text":
+                    parts.append({"type": "input_text", "text": block.get("text", "")})
+                elif btype == "tool_result":
+                    parts.append(
+                        {
+                            "type": "input_text",
+                            "text": block.get("content", ""),
+                        }
+                    )
+            if parts:
+                out.append({"role": role, "content": parts})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Provider registry + detection + fallback
 # ---------------------------------------------------------------------------
@@ -429,22 +625,36 @@ def _find_tool_name(contents: list[Any], tool_use_id: str) -> str:
 PROVIDERS: dict[str, type[_Provider]] = {
     "anthropic": AnthropicProvider,
     "google": GeminiProvider,
+    "openai-codex": CodexProvider,
 }
 
 _RATE_LIMIT_COOLDOWN = 300  # 5 minutes
 
 
 def detect_provider() -> str | None:
-    """Return the preferred provider key, or None if no API keys found.
+    """Return preferred provider key or None.
 
-    Preference: Gemini if both available (matches existing behavior).
+    Priority:
+      1) ONECMD_MGR_PROVIDER explicit override
+      2) GOOGLE_API_KEY
+      3) ANTHROPIC_API_KEY
+      4) Codex credentials (OPENAI_CODEX_TOKEN or auth.json)
     """
+    forced = (os.environ.get("ONECMD_MGR_PROVIDER") or "").strip().lower()
+    if forced:
+        aliases = {"codex": "openai-codex", "openai_codex": "openai-codex"}
+        forced = aliases.get(forced, forced)
+        if forced in PROVIDERS:
+            return forced
+
     has_google = bool(os.environ.get("GOOGLE_API_KEY"))
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
     if has_google:
         return "google"
     if has_anthropic:
         return "anthropic"
+    if has_codex_credentials():
+        return "openai-codex"
     return None
 
 
@@ -455,7 +665,8 @@ class ProviderManager:
         self._primary_key = primary or detect_provider()
         if not self._primary_key:
             raise RuntimeError(
-                "No LLM API key found. Set ANTHROPIC_API_KEY or GOOGLE_API_KEY."
+                "No LLM provider credentials found. Set GOOGLE_API_KEY or "
+                "ANTHROPIC_API_KEY, or configure Codex auth in ~/.onecmd/auth.json."
             )
         self._providers: dict[str, _Provider] = {}
         self._active_key: str = self._primary_key
@@ -467,8 +678,11 @@ class ProviderManager:
         for key in PROVIDERS:
             if key == self._primary_key:
                 continue
-            env_var = "ANTHROPIC_API_KEY" if key == "anthropic" else "GOOGLE_API_KEY"
-            if os.environ.get(env_var):
+            if key == "google" and os.environ.get("GOOGLE_API_KEY"):
+                return key
+            if key == "anthropic" and os.environ.get("ANTHROPIC_API_KEY"):
+                return key
+            if key == "openai-codex" and has_codex_credentials():
                 return key
         return None
 

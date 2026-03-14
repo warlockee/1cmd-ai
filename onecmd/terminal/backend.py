@@ -139,7 +139,15 @@ class ValidatedBackend:
 
 def create_backend(scope: Scope, danger_mode: bool = False) -> ValidatedBackend:
     """Create a scoped, validated backend based on the detected scope."""
-    key = "tmux" if scope.use_tmux else "macos"
+    if scope.use_tmux:
+        key = "tmux"
+    elif sys.platform == "darwin":
+        key = "macos"
+    else:
+        # Linux/non-macOS: default to tmux backend even when no current session
+        # is detected; backend will operate across all tmux sessions.
+        key = "tmux"
+
     fqn = BACKENDS[key]
     mod_path, cls_name = fqn.rsplit(".", 1)
     mod = importlib.import_module(mod_path)
