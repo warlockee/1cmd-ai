@@ -53,7 +53,11 @@ Send `.mgr` to enter manager mode. Your messages go to the AI agent, which can s
 
 ### Providers
 
-The manager supports **Gemini** (Google) and **Claude** (Anthropic). The provider is selected automatically based on which API key is set. If both are set, Gemini is preferred. Override the model with `ONECMD_MGR_MODEL`.
+The manager supports **Gemini** (Google), **Claude** (Anthropic), and **OpenAI Codex**.
+
+- If `ONECMD_MGR_PROVIDER` is set, that provider is used.
+- Otherwise, auto-detection prefers Gemini, then Claude, then Codex auth.
+- Override model with `ONECMD_MGR_MODEL`.
 
 ```bash
 # Using Gemini (recommended — fast and free tier available)
@@ -61,7 +65,12 @@ GOOGLE_API_KEY=... onecmd --apikey YOUR_BOT_TOKEN
 
 # Using Claude
 ANTHROPIC_API_KEY=sk-... onecmd --apikey YOUR_BOT_TOKEN
+
+# Using Codex OAuth auth.json
+ONECMD_MGR_PROVIDER=openai-codex onecmd --apikey YOUR_BOT_TOKEN
 ```
+
+Codex credentials are read from `~/.onecmd/auth.json` (or `ONECMD_AUTH_FILE`).
 
 ### Standard Operating Procedure
 
@@ -159,7 +168,12 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 |----------|---------|-------------|
 | `GOOGLE_API_KEY` | (none) | Google API key for the AI manager (Gemini) |
 | `ANTHROPIC_API_KEY` | (none) | Anthropic API key for the AI manager (Claude) |
+| `ONECMD_MGR_PROVIDER` | (auto) | Force provider (`google`, `anthropic`, `openai-codex`) |
 | `ONECMD_MGR_MODEL` | (auto) | LLM model override |
+| `ONECMD_AUTH_FILE` | `~/.onecmd/auth.json` | Auth profile file path (used for Codex OAuth creds) |
+| `OPENAI_CODEX_TOKEN` | (none) | Optional direct Codex access token override |
+| `OPENAI_CODEX_ACCOUNT_ID` | (none) | Optional direct Codex account id override |
+| `OPENAI_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Refresh endpoint for Codex OAuth tokens |
 | `ONECMD_VISIBLE_LINES` | `40` | Number of terminal lines to include in output |
 | `ONECMD_SPLIT_MESSAGES` | off | Set to `1` to split long output across multiple messages |
 
@@ -190,6 +204,30 @@ GOOGLE_API_KEY=... .venv/bin/onecmd --apikey YOUR_BOT_TOKEN
 
 # Run without AI manager (manual mode only)
 .venv/bin/onecmd --apikey YOUR_BOT_TOKEN
+```
+
+### Run as a user systemd service (Linux)
+
+For persistent background run with auto-restart:
+
+```bash
+cd ~/tools/1cmd-ai
+./install-user-service.sh
+```
+
+Service commands:
+
+```bash
+systemctl --user status onecmd.service
+journalctl --user -u onecmd.service -f
+systemctl --user restart onecmd.service
+systemctl --user stop onecmd.service
+```
+
+Optional (start even when not logged in):
+
+```bash
+sudo loginctl enable-linger $USER
 ```
 
 ## Security

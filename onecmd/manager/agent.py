@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -378,6 +379,11 @@ class Agent:
         if memories:
             logger.info("Loaded %d memories for chat %d", len(memories), chat_id)
 
+        debug_prompts = self.debug or os.environ.get("ONECMD_DEBUG_PROMPTS", "").lower() in {"1", "true", "yes"}
+        if debug_prompts:
+            logger.info("[PROMPT][system]\n%s", system_prompt)
+            logger.info("[PROMPT][user]\n%s", text)
+
         # Build tool-execution context
         ctx = self._build_tool_ctx(chat_id)
 
@@ -455,7 +461,11 @@ class Agent:
         if self._config.mgr_model:
             return self._config.mgr_model
         name = self._providers.active_name
-        defaults = {"google": "gemini-3-flash-preview", "anthropic": "claude-sonnet-4-20250514"}
+        defaults = {
+            "google": "gemini-3-flash-preview",
+            "anthropic": "claude-sonnet-4-20250514",
+            "openai-codex": "gpt-5.3-codex",
+        }
         return defaults.get(name, "claude-sonnet-4-20250514")
 
     def _build_tool_ctx(self, chat_id: int) -> dict[str, Any]:

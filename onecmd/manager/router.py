@@ -60,10 +60,11 @@ class ManagerRouter:
             self._init_agent()
         if self._agent is None:
             return (
-                "Manager unavailable — no LLM API key.\n\n"
-                "Set one of these environment variables:\n"
+                "Manager unavailable — no LLM provider credentials.\n\n"
+                "Configure one of:\n"
                 "<code>GOOGLE_API_KEY</code> — Gemini (recommended)\n"
-                "<code>ANTHROPIC_API_KEY</code> — Claude\n\n"
+                "<code>ANTHROPIC_API_KEY</code> — Claude\n"
+                "<code>~/.onecmd/auth.json</code> with <code>openai-codex</code> OAuth creds\n\n"
                 "Then restart onecmd."
             )
         self._active = True
@@ -77,10 +78,11 @@ class ManagerRouter:
             self._init_ceo_agent()
         if self._ceo_agent is None:
             return (
-                "CEO unavailable — no LLM API key.\n\n"
-                "Set one of these environment variables:\n"
+                "CEO unavailable — no LLM provider credentials.\n\n"
+                "Configure one of:\n"
                 "<code>GOOGLE_API_KEY</code> — Gemini (recommended)\n"
-                "<code>ANTHROPIC_API_KEY</code> — Claude\n\n"
+                "<code>ANTHROPIC_API_KEY</code> — Claude\n"
+                "<code>~/.onecmd/auth.json</code> with <code>openai-codex</code> OAuth creds\n\n"
                 "Then restart onecmd."
             )
         self._ceo_active = True

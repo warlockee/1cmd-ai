@@ -149,12 +149,14 @@ echo -e "${BOLD}AI Manager${NC}"
 echo ""
 echo "  OneCmd includes an AI manager that monitors your terminals,"
 echo "  answers questions, and executes tasks autonomously."
-echo "  You can configure one or both AI providers."
-echo "  If both are set, Gemini is used by default with Claude as fallback."
+echo "  Configure Gemini/Claude API keys and/or Codex OAuth."
 echo ""
 
 GOOGLE_KEY=""
 ANTHROPIC_KEY=""
+USE_CODEX_AUTH=""
+MGR_PROVIDER=""
+MGR_MODEL=""
 
 read -p "  Google API key (Enter to skip): " GOOGLE_KEY
 GOOGLE_KEY=$(echo "$GOOGLE_KEY" | tr -d '[:space:]')
@@ -162,12 +164,106 @@ GOOGLE_KEY=$(echo "$GOOGLE_KEY" | tr -d '[:space:]')
 read -p "  Anthropic API key (Enter to skip): " ANTHROPIC_KEY
 ANTHROPIC_KEY=$(echo "$ANTHROPIC_KEY" | tr -d '[:space:]')
 
+echo ""
+read -p "  Configure Codex OAuth auth.json? [y/N] " -n 1 -r USE_CODEX_AUTH
+echo ""
+
+if [[ $USE_CODEX_AUTH =~ ^[Yy]$ ]]; then
+    AUTH_DIR="$HOME/.onecmd"
+    AUTH_FILE="$AUTH_DIR/auth.json"
+    mkdir -p "$AUTH_DIR"
+
+    echo ""
+    echo "  Codex auth source:"
+    echo "    1) Import from ~/.codex/auth.json (recommended)"
+    echo "    2) Paste token/account manually"
+    read -p "  Choose [1/2]: " -n 1 -r CODEX_CHOICE
+    echo ""
+
+    if [[ "$CODEX_CHOICE" == "1" ]]; then
+        if [[ -f "$HOME/.codex/auth.json" ]]; then
+            if python3 - <<'PY'
+import json, time
+from pathlib import Path
+src = Path.home()/'.codex'/'auth.json'
+dst = Path.home()/'.onecmd'/'auth.json'
+raw = json.loads(src.read_text(encoding='utf-8'))
+tokens = raw.get('tokens') or {}
+access = tokens.get('access_token')
+refresh = tokens.get('refresh_token')
+account = tokens.get('account_id')
+id_token = tokens.get('id_token')
+if not access or not account:
+    raise SystemExit(1)
+out = {
+  'openai-codex': {
+    'type': 'oauth',
+    'access_token': access,
+    'refresh_token': refresh or '',
+    'id_token': id_token or '',
+    'account_id': account,
+    'expires_at': int(time.time()) + 3600,
+    'token_type': 'Bearer'
+  }
+}
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_text(json.dumps(out, indent=2) + '\n', encoding='utf-8')
+PY
+            then
+                chmod 600 "$AUTH_FILE"
+                ok "Imported Codex OAuth credentials to $AUTH_FILE"
+                MGR_PROVIDER="openai-codex"
+                MGR_MODEL="gpt-5.3-codex"
+            else
+                warn "Import failed: ~/.codex/auth.json missing required fields"
+            fi
+        else
+            warn "~/.codex/auth.json not found"
+        fi
+    else
+        read -p "  OPENAI_CODEX_TOKEN: " CODEX_TOKEN
+        CODEX_TOKEN=$(echo "$CODEX_TOKEN" | tr -d '[:space:]')
+        read -p "  OPENAI_CODEX_ACCOUNT_ID: " CODEX_ACCOUNT_ID
+        CODEX_ACCOUNT_ID=$(echo "$CODEX_ACCOUNT_ID" | tr -d '[:space:]')
+        read -p "  OPENAI_CODEX_REFRESH_TOKEN (optional): " CODEX_REFRESH_TOKEN
+        CODEX_REFRESH_TOKEN=$(echo "$CODEX_REFRESH_TOKEN" | tr -d '[:space:]')
+
+        if [[ -n "$CODEX_TOKEN" && -n "$CODEX_ACCOUNT_ID" ]]; then
+            python3 - <<PY
+import json, time
+from pathlib import Path
+p = Path.home()/'.onecmd'/'auth.json'
+out = {
+  'openai-codex': {
+    'type': 'oauth',
+    'access_token': '$CODEX_TOKEN',
+    'refresh_token': '$CODEX_REFRESH_TOKEN',
+    'id_token': '',
+    'account_id': '$CODEX_ACCOUNT_ID',
+    'expires_at': int(time.time()) + 3600,
+    'token_type': 'Bearer'
+  }
+}
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps(out, indent=2) + '\n', encoding='utf-8')
+PY
+            chmod 600 "$AUTH_FILE"
+            ok "Saved Codex OAuth credentials to $AUTH_FILE"
+            MGR_PROVIDER="openai-codex"
+            MGR_MODEL="gpt-5.3-codex"
+        else
+            warn "Codex token/account_id not provided; skipping Codex auth setup"
+        fi
+    fi
+fi
+
 HAS_LLM=""
 [[ -n "$GOOGLE_KEY" ]] && HAS_LLM=1
 [[ -n "$ANTHROPIC_KEY" ]] && HAS_LLM=1
+[[ -n "$MGR_PROVIDER" ]] && HAS_LLM=1
 
 if [[ -z "$HAS_LLM" ]]; then
-    warn "No API keys provided. AI manager will be unavailable."
+    warn "No LLM credentials provided. AI manager will be unavailable."
 fi
 
 # Step 6: Accessibility permission check (macOS only)
@@ -193,6 +289,8 @@ ENV_FILE=".env"
     echo "TELEGRAM_BOT_TOKEN=$(tr -d '[:space:]' < apikey.txt)"
     [[ -n "$GOOGLE_KEY" ]] && echo "GOOGLE_API_KEY=$GOOGLE_KEY"
     [[ -n "$ANTHROPIC_KEY" ]] && echo "ANTHROPIC_API_KEY=$ANTHROPIC_KEY"
+    [[ -n "$MGR_PROVIDER" ]] && echo "ONECMD_MGR_PROVIDER=$MGR_PROVIDER"
+    [[ -n "$MGR_MODEL" ]] && echo "ONECMD_MGR_MODEL=$MGR_MODEL"
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 ok "Created .env (mode 600)"
