@@ -304,6 +304,23 @@ class Agent:
 
     # -- public API ---------------------------------------------------------
 
+    def set_model(self, provider_key: str | None, model: str | None) -> str:
+        """Switch provider and/or model. Returns status message."""
+        if provider_key:
+            self._providers.switch_provider(provider_key)
+        if model:
+            self._model_override = model
+        else:
+            self._model_override = None
+
+        cur = self._providers.active_name
+        cur_model = self._resolve_model()
+        return f"{cur} / {cur_model}"
+
+    def get_model_info(self) -> str:
+        """Return current provider and model."""
+        return f"{self._providers.active_name} / {self._resolve_model()}"
+
     def handle_message(self, chat_id: int, text: str) -> str:
         """Process a user message and return the assistant's response text.
 
@@ -457,13 +474,16 @@ class Agent:
             return f"API error: {err_msg}"
 
     def _resolve_model(self) -> str:
-        """Return the LLM model to use (config override or provider default)."""
+        """Return the LLM model to use (runtime override > config > provider default)."""
+        if getattr(self, '_model_override', None):
+            return self._model_override
         if self._config.mgr_model:
             return self._config.mgr_model
         name = self._providers.active_name
         defaults = {
             "google": "gemini-3-flash-preview",
             "anthropic": "claude-sonnet-4-20250514",
+            "anthropic-oauth": "claude-sonnet-4-20250514",
             "openai-codex": "gpt-5.3-codex",
         }
         return defaults.get(name, "claude-sonnet-4-20250514")

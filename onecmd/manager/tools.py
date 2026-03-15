@@ -487,6 +487,114 @@ def tool_read_sop(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 # Tool registry
 # ---------------------------------------------------------------------------
 
+def tool_spawn_role(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Spawn an AI agent in a new terminal with smart task monitoring.
+
+    Fixed sequence:
+      1. Create terminal, rename it
+      2. Write role instructions to a temp file (Python I/O, not CGEvent)
+      3. Send short commands: cd <dir>, then: claude
+      4. Smart task waits for claude to be ready, sends instructions, monitors
+    """
+    from pathlib import Path as _Path
+    from onecmd.manager.tasks import SmartTask
+
+    backend: _Backend = ctx["backend"]
+    queue_cls = ctx["queue_cls"]
+    tasks: dict[int, Any] = ctx["tasks"]
+    tasks_lock: threading.Lock = ctx["tasks_lock"]
+    notify = ctx["notify"]
+    chat_id: int = ctx["chat_id"]
+
+    role_name: str = args["role_name"]
+    project_dir: str = args["project_dir"]
+    role_instructions: str = args["role_instructions"]
+
+    # Step 1: Create terminal — diff IDs before/after to find the new one
+    old_ids = {t.id for t in backend.list()}
+    result = backend.create()
+    if result is None:
+        return f"Failed to create terminal for {role_name}."
+    time.sleep(1.0)
+    backend.list()
+    new_ids = {t.id for t in backend.list()} - old_ids
+    if not new_ids:
+        return f"Terminal created for {role_name} but could not identify it."
+    tid = new_ids.pop()
+
+    # Step 2: Rename
+    alias = f"ceo-{role_name}"
+    aliases = _read_aliases()
+    aliases[tid] = alias
+    _write_aliases(aliases)
+
+    # Step 3: Write instructions to temp file (no CGEvent needed)
+    instructions_file = f"/tmp/ceo-{role_name}.md"
+    _Path(instructions_file).write_text(role_instructions)
+
+    # Step 4: Send short commands via queue — reliable over CGEvent
+    q = queue_cls.get(tid, backend)
+    q.enqueue(f"mkdir -p {project_dir} && cd {project_dir}\n",
+              f"cd to project dir for {role_name}",
+              stable_seconds=3.0, on_complete=None)
+    q.enqueue("claude\n",
+              f"Launch claude for {role_name}",
+              stable_seconds=10.0, on_complete=None)
+
+    # Step 5: Smart task waits for claude, sends instructions, monitors
+    handle_task_result = ctx.get("handle_task_result")
+
+    def task_notify(text: str) -> None:
+        notify(chat_id, text)
+
+    def on_complete(task_result: str) -> None:
+        if handle_task_result:
+            handle_task_result(chat_id, task_result)
+        else:
+            notify(chat_id, task_result)
+
+    monitor_prompt = (
+        f"Monitor the {role_name} agent terminal.\n\n"
+        f"Phase 1 — WAIT for claude to start. You will see claude's prompt "
+        f"or a 'trust this folder' dialog. If you see a trust dialog, "
+        f"send the number to select 'Yes'. Once claude is ready for input, "
+        f"move to phase 2.\n\n"
+        f"Phase 2 — Send this SHORT text as input:\n"
+        f"Read and follow the instructions in {instructions_file}\n\n"
+        f"Phase 3 — Monitor until the agent prints TASK COMPLETE or gets stuck."
+    )
+
+    task = SmartTask(
+        terminal_id=tid,
+        backend=backend,
+        notify=task_notify,
+        chat_fn=ctx["chat_fn"],
+        format_results_fn=ctx["format_results_fn"],
+        prompt=monitor_prompt,
+        send_text="",
+        poll_interval=15,
+        max_iterations=100,
+        debug=ctx.get("debug", False),
+        on_complete=on_complete,
+    )
+    with tasks_lock:
+        tasks[task.task_id] = task
+    task.start()
+
+    notify(chat_id,
+           f"Spawned {role_name} agent in terminal [{alias}] "
+           f"with smart task #{task.task_id}")
+
+    return (
+        f"Role '{role_name}' spawned successfully:\n"
+        f"- Terminal: {alias} [id={tid}]\n"
+        f"- Instructions: written to {instructions_file}\n"
+        f"- Smart task: #{task.task_id} monitoring\n"
+        "The user has been notified. "
+        "Smart task will report progress automatically."
+    )
+
+
 def tool_restart_service(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Restart a system service (delegated to service_restart module)."""
     from onecmd.manager.service_restart import tool_restart_service as _impl
@@ -520,6 +628,7 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "list_memories": tool_list_memories,
     "read_sop": tool_read_sop,
     "send_message_to_user": tool_send_message_to_user,
+    "spawn_role": tool_spawn_role,
     "restart_service": tool_restart_service,
     "detect_crashes": tool_detect_crashes,
     "check_resources": tool_check_resources,
@@ -639,6 +748,18 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "input_schema": _schema(
          _props(text="The message text to send to the user (plain text, no markdown)"),
          ["text"])},
+    {"name": "spawn_role",
+     "description": "Spawn an AI agent for a specific role in a new terminal. "
+        "Creates a terminal, names it, launches claude, writes instructions to a file, "
+        "and attaches a smart task to deliver instructions and monitor progress. "
+        "Use this in CEO mode to set up each role.",
+     "input_schema": _schema(
+         _props(role_name="Short role identifier (e.g. 'pm', 'dev', 'qa', 'market', 'devops')",
+                project_dir="Absolute path to the project directory. Will be created if it doesn't exist. "
+                            "Example: /Users/erik/projects/my-app",
+                role_instructions="Full instructions for the AI agent. Describe its role, specific tasks, "
+                                  "and deliverables. End with: 'When done, print TASK COMPLETE.'"),
+         ["role_name", "project_dir", "role_instructions"])},
     {"name": "restart_service",
      "description": "Restart a system service (systemd on Linux, brew services on macOS). "
         "ALWAYS ask the user for confirmation first unless the service is in the auto-restart list "

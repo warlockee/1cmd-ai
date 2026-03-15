@@ -34,6 +34,7 @@ import time
 from typing import Any
 from urllib import error, request
 
+from onecmd.auth.claude import ClaudeAuthError, ensure_fresh_claude_credentials, has_claude_credentials
 from onecmd.auth.codex import CodexAuthError, ensure_fresh_codex_credentials, has_codex_credentials
 
 logger = logging.getLogger(__name__)
@@ -89,9 +90,16 @@ class AnthropicProvider(_Provider):
     name = "anthropic"
     default_max_tokens = 64000  # Sonnet/Haiku: 64K, Opus 4.6: 128K
 
-    def __init__(self) -> None:
+    def __init__(self, oauth: bool = False) -> None:
         import anthropic
-        self._client = anthropic.Anthropic(timeout=120.0)
+        self._oauth = oauth
+        if oauth:
+            creds = ensure_fresh_claude_credentials()
+            self._client = anthropic.Anthropic(
+                auth_token=creds["accessToken"], timeout=120.0,
+            )
+        else:
+            self._client = anthropic.Anthropic(timeout=120.0)
 
     def chat(
         self,
@@ -101,6 +109,12 @@ class AnthropicProvider(_Provider):
         messages: list[dict[str, Any]],
         max_tokens: int,
     ) -> tuple[list[dict[str, Any]], list[str], list[ToolUse], str | None]:
+        if self._oauth:
+            import anthropic
+            creds = ensure_fresh_claude_credentials()
+            self._client = anthropic.Anthropic(
+                auth_token=creds["accessToken"], timeout=120.0,
+            )
         response = self._client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -394,8 +408,16 @@ class CodexProvider(_Provider):
         text_parts: list[str] = []
         stream_deltas: list[str] = []
         tool_uses: list[ToolUse] = []
+        seen_item_ids: set[str] = set()
 
         def _append_output_item(item: dict[str, Any]) -> None:
+            # Deduplicate: output_item.done and response.completed both emit items
+            item_id = item.get("id") or item.get("call_id") or ""
+            if item_id and item_id in seen_item_ids:
+                return
+            if item_id:
+                seen_item_ids.add(item_id)
+
             typ = item.get("type")
             if typ == "message":
                 for c in item.get("content", []) or []:
@@ -631,10 +653,23 @@ def _to_codex_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # Provider registry + detection + fallback
 # ---------------------------------------------------------------------------
 
-PROVIDERS: dict[str, type[_Provider]] = {
+def _make_anthropic_oauth() -> AnthropicProvider:
+    return AnthropicProvider(oauth=True)
+
+
+PROVIDERS: dict[str, Any] = {
     "anthropic": AnthropicProvider,
+    "anthropic-oauth": _make_anthropic_oauth,
     "google": GeminiProvider,
     "openai-codex": CodexProvider,
+}
+
+_PROVIDER_ALIASES: dict[str, str] = {
+    "codex": "openai-codex",
+    "openai_codex": "openai-codex",
+    "claude": "anthropic",
+    "claude-oauth": "anthropic-oauth",
+    "claude_oauth": "anthropic-oauth",
 }
 
 _RATE_LIMIT_COOLDOWN = 300  # 5 minutes
@@ -647,12 +682,12 @@ def detect_provider() -> str | None:
       1) ONECMD_MGR_PROVIDER explicit override
       2) GOOGLE_API_KEY
       3) ANTHROPIC_API_KEY
-      4) Codex credentials (OPENAI_CODEX_TOKEN or auth.json)
+      4) Claude OAuth (Keychain / auth.json / CLAUDE_CODE_OAUTH_TOKEN)
+      5) Codex credentials (OPENAI_CODEX_TOKEN or auth.json)
     """
     forced = (os.environ.get("ONECMD_MGR_PROVIDER") or "").strip().lower()
     if forced:
-        aliases = {"codex": "openai-codex", "openai_codex": "openai-codex"}
-        forced = aliases.get(forced, forced)
+        forced = _PROVIDER_ALIASES.get(forced, forced)
         if forced in PROVIDERS:
             return forced
 
@@ -662,6 +697,8 @@ def detect_provider() -> str | None:
         return "google"
     if has_anthropic:
         return "anthropic"
+    # Note: anthropic-oauth not auto-detected — Anthropic API does not
+    # support OAuth yet.  Use ONECMD_MGR_PROVIDER=anthropic-oauth to force.
     if has_codex_credentials():
         return "openai-codex"
     return None
@@ -674,8 +711,9 @@ class ProviderManager:
         self._primary_key = primary or detect_provider()
         if not self._primary_key:
             raise RuntimeError(
-                "No LLM provider credentials found. Set GOOGLE_API_KEY or "
-                "ANTHROPIC_API_KEY, or configure Codex auth in ~/.onecmd/auth.json."
+                "No LLM provider credentials found. Set GOOGLE_API_KEY, "
+                "ANTHROPIC_API_KEY, or login with `claude` CLI (OAuth), "
+                "or configure Codex auth in ~/.onecmd/auth.json."
             )
         self._providers: dict[str, _Provider] = {}
         self._active_key: str = self._primary_key
@@ -690,6 +728,8 @@ class ProviderManager:
             if key == "google" and os.environ.get("GOOGLE_API_KEY"):
                 return key
             if key == "anthropic" and os.environ.get("ANTHROPIC_API_KEY"):
+                return key
+            if key == "anthropic-oauth" and has_claude_credentials():
                 return key
             if key == "openai-codex" and has_codex_credentials():
                 return key
@@ -709,6 +749,19 @@ class ProviderManager:
     @property
     def active_name(self) -> str:
         return self._active_key
+
+    def switch_provider(self, key: str) -> None:
+        """Manually switch the active provider. Raises KeyError if invalid."""
+        key = _PROVIDER_ALIASES.get(key, key)
+        if key not in PROVIDERS:
+            raise KeyError(f"Unknown provider: {key}. Available: {', '.join(PROVIDERS)}")
+        self._primary_key = key
+        self._active_key = key
+        self._cooldown_until = 0.0
+        self._fallback_key = self._detect_fallback()
+        # Force re-init on next access
+        self._providers.pop(key, None)
+        logger.info("Manually switched provider to %s", key)
 
     def switch_on_rate_limit(self) -> bool:
         """Switch to fallback provider with cooldown. Returns True if fallback available."""

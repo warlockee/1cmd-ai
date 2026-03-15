@@ -63,7 +63,8 @@ class ManagerRouter:
                 "Manager unavailable — no LLM provider credentials.\n\n"
                 "Configure one of:\n"
                 "<code>GOOGLE_API_KEY</code> — Gemini (recommended)\n"
-                "<code>ANTHROPIC_API_KEY</code> — Claude\n"
+                "<code>ANTHROPIC_API_KEY</code> — Claude API key\n"
+                "Login with <code>claude</code> CLI — Claude OAuth (auto-detected)\n"
                 "<code>~/.onecmd/auth.json</code> with <code>openai-codex</code> OAuth creds\n\n"
                 "Then restart onecmd."
             )
@@ -127,6 +128,24 @@ class ManagerRouter:
         except Exception:
             logger.exception("CEO agent error")
             return "Error processing your message. Try again."
+
+    def set_model(self, provider_key: str | None, model: str | None) -> str:
+        """Switch provider/model on both agents. Returns status."""
+        results = []
+        for label, agent in [("mgr", self._agent), ("ceo", self._ceo_agent)]:
+            if agent is not None:
+                try:
+                    results.append(agent.set_model(provider_key, model))
+                except (KeyError, RuntimeError) as e:
+                    return str(e)
+        return results[0] if results else "No agent initialized. Use .mgr first."
+
+    def get_model_info(self) -> str:
+        """Return current provider/model from whichever agent is active."""
+        for agent in (self._ceo_agent, self._agent):
+            if agent is not None:
+                return agent.get_model_info()
+        return "No agent initialized."
 
     def health(self) -> dict:
         """Return manager health info."""

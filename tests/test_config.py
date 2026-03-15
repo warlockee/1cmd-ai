@@ -27,8 +27,11 @@ def _parse(**env_overrides) -> Config:
             "ANTHROPIC_API_KEY",
             "GOOGLE_API_KEY",
             "ONECMD_MGR_MODEL",
+            "ONECMD_MGR_PROVIDER",
             "ONECMD_VISIBLE_LINES",
             "ONECMD_SPLIT_MESSAGES",
+            "OPENAI_CODEX_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
         }
     }
     clean_env.update(env_overrides)
@@ -59,7 +62,9 @@ class TestDefaults:
 
     def test_has_llm_key_false_by_default(self):
         cfg = _parse()
-        assert cfg.has_llm_key is False
+        with mock.patch("onecmd.auth.claude.has_claude_credentials", return_value=False), \
+             mock.patch("onecmd.auth.codex.has_codex_credentials", return_value=False):
+            assert cfg.has_llm_key is False
 
     def test_has_llm_key_anthropic(self):
         cfg = _parse(ANTHROPIC_API_KEY="sk-test")

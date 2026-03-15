@@ -96,6 +96,13 @@ def _save_alias(term_id: str, name: str) -> None:
 
 def _build_list_text(terminals: list[TermInfo], connected_id: str = "") -> str:
     if not terminals:
+        import sys
+        if sys.platform != "darwin":
+            return (
+                "No terminal sessions found.\n\n"
+                "On Linux, onecmd controls tmux sessions.\n"
+                "Start one with: <code>tmux new -s dev</code>"
+            )
         return "No terminal sessions found."
     lines = [f"<b>Terminals</b> ({len(terminals)})"]
     aliases = _load_aliases()
@@ -275,12 +282,28 @@ async def _cmd_health(bot, chat_id, _text, s, backend, _store, config, router=No
     h, r = divmod(up, 3600)
     m, sec = divmod(r, 60)
     conn = f"{html_escape(s.term_name)} ({s.term_id})" if s.connected else "None"
+    # Detect provider info
+    llm_status = "not configured"
+    if config.has_llm_key:
+        try:
+            from onecmd.manager.llm import detect_provider
+            provider = detect_provider()
+            _labels = {
+                "anthropic": "Anthropic (API key)",
+                "anthropic-oauth": "Claude (OAuth)",
+                "google": "Gemini (API key)",
+                "openai-codex": "Codex (OAuth)",
+            }
+            llm_status = _labels.get(provider, provider or "configured")
+        except Exception:
+            llm_status = "configured"
+
     lines = [
         "<b>Health Report</b>",
         f"Uptime: {h}h {m}m {sec}s",
         f"Connected: {conn}",
         f"Manager: {'CEO' if getattr(s, '_ceo_mode', False) else 'on' if s.mgr_mode else 'off'}",
-        f"LLM: {'configured' if config.has_llm_key else 'not configured'}",
+        f"LLM: {llm_status}",
         f"Terminals: {len(backend.list())}",
     ]
     if router:
@@ -334,6 +357,91 @@ async def _cmd_otptimeout(bot, chat_id, text, _s, _backend, store, config):
     await send_message(bot, chat_id, f"OTP timeout set to {secs} seconds.")
 
 
+_PROVIDERS = {
+    "gemini": ("google", "GOOGLE_API_KEY", "ai.google.dev"),
+    "claude": ("anthropic", "ANTHROPIC_API_KEY", "console.anthropic.com"),
+    "codex": ("openai-codex", None, None),
+}
+
+
+def _save_env_key(var: str, value: str) -> None:
+    """Set env var at runtime and persist to .env."""
+    os.environ[var] = value
+    try:
+        env_file = Path(".env")
+        content = env_file.read_text() if env_file.exists() else ""
+        import re as _re
+        if _re.search(rf'^{var}=', content, _re.MULTILINE):
+            content = _re.sub(rf'^{var}=.*$', f'{var}={value}', content, flags=_re.MULTILINE)
+        else:
+            content = content.rstrip() + f'\n{var}={value}\n'
+        env_file.write_text(content)
+        os.chmod(str(env_file), 0o600)
+    except Exception as e:
+        logger.warning("Failed to persist %s to .env: %s", var, e)
+
+
+async def _cmd_model(bot, chat_id, text, _s, _backend, _store, _config, router=None):
+    if not router:
+        await send_message(bot, chat_id, "Manager not available.")
+        return
+
+    args = text.split(None, 2)  # .model [name] [key]
+    name = args[1].lower() if len(args) > 1 else ""
+    key = args[2].strip() if len(args) > 2 else ""
+
+    # .model — show status
+    if not name:
+        info = router.get_model_info()
+        from onecmd.auth.codex import has_codex_credentials
+        lines = [f"Current: <code>{html_escape(info)}</code>", ""]
+        for label, (_, env_var, _) in _PROVIDERS.items():
+            if env_var:
+                ready = bool(os.environ.get(env_var))
+            else:
+                ready = has_codex_credentials()
+            mark = "\u2705" if ready else "\u274c"
+            lines.append(f"{mark} <code>.model {label}</code>")
+        await send_message(bot, chat_id, "\n".join(lines))
+        return
+
+    provider_info = _PROVIDERS.get(name)
+    if not provider_info:
+        await send_message(bot, chat_id,
+            f"Unknown: {html_escape(name)}\nUse: gemini, claude, or codex")
+        return
+
+    provider_key, env_var, signup_url = provider_info
+
+    # .model claude sk-ant-xxx — save key and switch
+    if key and env_var:
+        _save_env_key(env_var, key)
+
+    # Check credentials
+    if env_var:
+        has_creds = bool(os.environ.get(env_var))
+    else:
+        from onecmd.auth.codex import has_codex_credentials
+        has_creds = has_codex_credentials()
+
+    if not has_creds:
+        if env_var:
+            await send_message(bot, chat_id,
+                f"Paste your key:\n<code>.model {html_escape(name)} YOUR_KEY</code>"
+                f"\n\nGet one at {signup_url}")
+        else:
+            await send_message(bot, chat_id,
+                "Run <code>codex</code> on the server to login,"
+                " then <code>./setup.sh</code> to import")
+        return
+
+    try:
+        result = router.set_model(provider_key, None)
+        await send_message(bot, chat_id, f"Switched: <code>{html_escape(result)}</code>")
+    except Exception as e:
+        await send_message(bot, chat_id, f"Error: {html_escape(str(e))}")
+
+
 COMMANDS: dict[str, CmdFn] = {
     ".list": _cmd_list,
     ".new": _cmd_new,
@@ -344,6 +452,7 @@ COMMANDS: dict[str, CmdFn] = {
     ".help": _cmd_help,
     ".health": _cmd_health,
     ".rename": _cmd_rename,
+    ".model": _cmd_model,
     ".otptimeout": _cmd_otptimeout,
 }
 
@@ -397,7 +506,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
 
     router = ManagerRouter(backend, config, _notify_sync)
 
-    _ROUTER_CMDS = {".mgr", ".ceo", ".exit", ".health", ".debug"}
+    _ROUTER_CMDS = {".mgr", ".ceo", ".exit", ".health", ".debug", ".model"}
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot = context.bot
@@ -432,7 +541,10 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             welcome = build_welcome_message(
                 len(terminals), _build_list_text(terminals))
             await send_message(bot, chat_id, welcome)
-            return
+            # Fall through so the first message still executes as a command.
+            # Skip if it's /start or plain text (welcome already shows the list).
+            if text.startswith("/start") or not text.startswith("."):
+                return
         if not is_owner:
             return
 
