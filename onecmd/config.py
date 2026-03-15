@@ -7,12 +7,13 @@ Calling spec:
   Side effects: reads apikey.txt if --apikey not provided
 
 Env vars read:
-  ANTHROPIC_API_KEY    - Anthropic LLM key
-  GOOGLE_API_KEY       - Google LLM key
-  ONECMD_MGR_PROVIDER  - Force provider (google|anthropic|openai-codex)
-  ONECMD_MGR_MODEL     - Override LLM model name
-  ONECMD_AUTH_FILE     - Auth profile file path (Codex OAuth)
-  OPENAI_CODEX_TOKEN   - Optional direct Codex access token
+  ANTHROPIC_API_KEY        - Anthropic LLM key
+  GOOGLE_API_KEY           - Google LLM key
+  ONECMD_MGR_PROVIDER      - Force provider (google|anthropic|anthropic-oauth|openai-codex)
+  ONECMD_MGR_MODEL         - Override LLM model name
+  ONECMD_AUTH_FILE         - Auth profile file path (OAuth credentials)
+  OPENAI_CODEX_TOKEN       - Optional direct Codex access token
+  CLAUDE_CODE_OAUTH_TOKEN  - Optional direct Claude OAuth token
   ONECMD_VISIBLE_LINES - Terminal visible lines (int, 10-200)
   ONECMD_SPLIT_MESSAGES - Enable message splitting ("1" or "true")
   ONECMD_ADMIN_PASSWORD - Admin panel password
@@ -60,10 +61,21 @@ class Config(BaseModel, extra="forbid"):
         if forced in {"codex", "openai-codex", "openai_codex"}:
             try:
                 from onecmd.auth.codex import has_codex_credentials
-
                 return has_codex_credentials()
             except Exception:
                 return False
+        if forced in {"claude-oauth", "claude_oauth", "anthropic-oauth"}:
+            try:
+                from onecmd.auth.claude import has_claude_credentials
+                return has_claude_credentials()
+            except Exception:
+                return False
+        try:
+            from onecmd.auth.codex import has_codex_credentials
+            if has_codex_credentials():
+                return True
+        except Exception:
+            pass
         return False
 
     @property

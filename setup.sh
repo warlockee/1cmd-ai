@@ -229,17 +229,18 @@ PY
         CODEX_REFRESH_TOKEN=$(echo "$CODEX_REFRESH_TOKEN" | tr -d '[:space:]')
 
         if [[ -n "$CODEX_TOKEN" && -n "$CODEX_ACCOUNT_ID" ]]; then
-            python3 - <<PY
-import json, time
+            CODEX_TOKEN="$CODEX_TOKEN" CODEX_ACCOUNT_ID="$CODEX_ACCOUNT_ID" \
+            CODEX_REFRESH_TOKEN="$CODEX_REFRESH_TOKEN" python3 - <<'PY'
+import json, os, time
 from pathlib import Path
 p = Path.home()/'.onecmd'/'auth.json'
 out = {
   'openai-codex': {
     'type': 'oauth',
-    'access_token': '$CODEX_TOKEN',
-    'refresh_token': '$CODEX_REFRESH_TOKEN',
+    'access_token': os.environ['CODEX_TOKEN'],
+    'refresh_token': os.environ.get('CODEX_REFRESH_TOKEN', ''),
     'id_token': '',
-    'account_id': '$CODEX_ACCOUNT_ID',
+    'account_id': os.environ['CODEX_ACCOUNT_ID'],
     'expires_at': int(time.time()) + 3600,
     'token_type': 'Bearer'
   }
@@ -257,10 +258,80 @@ PY
     fi
 fi
 
+# Claude OAuth (auto-detect from Claude Code CLI)
+if [[ -z "$MGR_PROVIDER" && -z "$ANTHROPIC_KEY" ]]; then
+    CLAUDE_DETECTED=""
+    # Check macOS Keychain
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if security find-generic-password -s 'Claude Code-credentials' -w &>/dev/null; then
+            CLAUDE_DETECTED=1
+        fi
+    fi
+    # Check env var
+    [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && CLAUDE_DETECTED=1
+    # Check existing auth.json
+    if [[ -f "$HOME/.onecmd/auth.json" ]]; then
+        python3 -c "import json; d=json.load(open('$HOME/.onecmd/auth.json')); exit(0 if d.get('claudeAiOauth',{}).get('accessToken') else 1)" 2>/dev/null && CLAUDE_DETECTED=1
+    fi
+
+    if [[ -n "$CLAUDE_DETECTED" ]]; then
+        ok "Claude Code OAuth credentials detected (auto-detected from Keychain/env)"
+        echo "  onecmd will use Claude OAuth automatically."
+        echo ""
+    else
+        echo ""
+        read -p "  Import Claude OAuth from Claude Code CLI? [y/N] " -n 1 -r USE_CLAUDE_AUTH
+        echo ""
+        if [[ $USE_CLAUDE_AUTH =~ ^[Yy]$ ]]; then
+            if [[ "$(uname)" == "Darwin" ]]; then
+                if python3 - <<'CLPY'
+import json, subprocess, sys
+from pathlib import Path
+r = subprocess.run(
+    ['security', 'find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+    capture_output=True, text=True, timeout=5,
+)
+if r.returncode != 0 or not r.stdout.strip():
+    sys.exit(1)
+kc = json.loads(r.stdout.strip())
+creds = kc.get('claudeAiOauth')
+if not creds or not creds.get('accessToken'):
+    sys.exit(1)
+dst = Path.home() / '.onecmd' / 'auth.json'
+existing = {}
+if dst.exists():
+    existing = json.loads(dst.read_text(encoding='utf-8'))
+existing['claudeAiOauth'] = creds
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_text(json.dumps(existing, indent=2) + '\n', encoding='utf-8')
+CLPY
+                then
+                    chmod 600 "$HOME/.onecmd/auth.json"
+                    ok "Imported Claude OAuth credentials to ~/.onecmd/auth.json"
+                    MGR_PROVIDER="anthropic-oauth"
+                else
+                    warn "Could not read Claude Code credentials from Keychain"
+                    echo "  Make sure you've logged in with: claude"
+                fi
+            else
+                warn "Claude Code Keychain import is only available on macOS"
+                echo "  Set CLAUDE_CODE_OAUTH_TOKEN env var instead."
+            fi
+        fi
+    fi
+fi
+
 HAS_LLM=""
 [[ -n "$GOOGLE_KEY" ]] && HAS_LLM=1
 [[ -n "$ANTHROPIC_KEY" ]] && HAS_LLM=1
 [[ -n "$MGR_PROVIDER" ]] && HAS_LLM=1
+# Also detect Claude OAuth even without explicit provider set
+if [[ -z "$HAS_LLM" ]]; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+        security find-generic-password -s 'Claude Code-credentials' -w &>/dev/null && HAS_LLM=1
+    fi
+    [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && HAS_LLM=1
+fi
 
 if [[ -z "$HAS_LLM" ]]; then
     warn "No LLM credentials provided. AI manager will be unavailable."

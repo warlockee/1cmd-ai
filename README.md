@@ -55,22 +55,30 @@ Send `.mgr` to enter manager mode. Your messages go to the AI agent, which can s
 
 The manager supports **Gemini** (Google), **Claude** (Anthropic), and **OpenAI Codex**.
 
-- If `ONECMD_MGR_PROVIDER` is set, that provider is used.
-- Otherwise, auto-detection prefers Gemini, then Claude, then Codex auth.
-- Override model with `ONECMD_MGR_MODEL`.
+Switch providers live from Telegram with `.model`:
+
+```
+.model              — show current provider + what's configured
+.model gemini       — switch to Gemini
+.model claude       — switch to Claude (prompts for API key if not set)
+.model codex        — switch to Codex
+.model claude sk-ant-xxx  — set API key and switch in one command
+```
+
+Or configure via environment variables:
 
 ```bash
-# Using Gemini (recommended — fast and free tier available)
+# Gemini (recommended — fast and free tier available)
 GOOGLE_API_KEY=... onecmd --apikey YOUR_BOT_TOKEN
 
-# Using Claude
+# Claude
 ANTHROPIC_API_KEY=sk-... onecmd --apikey YOUR_BOT_TOKEN
 
-# Using Codex OAuth auth.json
+# Codex (OAuth — run `codex` CLI to login first, then ./setup.sh to import)
 ONECMD_MGR_PROVIDER=openai-codex onecmd --apikey YOUR_BOT_TOKEN
 ```
 
-Codex credentials are read from `~/.onecmd/auth.json` (or `ONECMD_AUTH_FILE`).
+Auto-detection priority: Gemini > Claude > Codex. Override with `ONECMD_MGR_PROVIDER` or `ONECMD_MGR_MODEL`.
 
 ### Standard Operating Procedure
 
@@ -91,9 +99,11 @@ Custom rules are appended to the default SOP automatically — no need to edit t
 | Command | Action |
 |---------|--------|
 | `.mgr` | Enter AI manager mode |
-| `.exit` | Leave manager mode |
+| `.ceo` | Enter CEO mode (multi-agent orchestration) |
+| `.model` | Show/switch LLM provider (gemini, claude, codex) |
+| `.exit` | Leave manager/CEO mode |
 | `.debug` | Toggle verbose smart task output |
-| `.health` | Manager health report (uptime, memory, stats) |
+| `.health` | Health report (uptime, provider, stats) |
 
 ## Manual Mode
 

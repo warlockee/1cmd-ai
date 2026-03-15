@@ -14,6 +14,7 @@ HELP_TEXT = (
     "<code>.rename N name</code> — name a terminal\n"
     "<code>.mgr</code> — AI manager mode\n"
     "<code>.ceo</code> — CEO mode (multi-agent orchestration)\n"
+    "<code>.model</code> — show/switch LLM (gemini, claude, codex)\n"
     "<code>.exit</code> — leave manager/CEO mode\n"
     "<code>.debug</code> — toggle verbose smart task output\n"
     "<code>.health</code> — health report\n"
@@ -42,6 +43,7 @@ def build_welcome_message(term_count: int, list_text: str) -> str:
         "<code>.list</code> — show terminals\n"
         "<code>.1</code> — connect to first terminal\n"
         "<code>.mgr</code> — AI manager mode\n"
+        "<code>.ceo</code> — CEO mode (multi-agent)\n"
         "<code>.help</code> — all commands"
     )
     return welcome
