@@ -152,3 +152,20 @@ async def answer_callback(bot: Bot, callback_id: str) -> bool:
     except TelegramError as exc:
         logger.error("answer_callback failed callback_id=%s: %s", callback_id, exc)
         return False
+
+
+async def pin_message(bot: Bot, chat_id: int, msg_id: int) -> bool:
+    """Pin a message silently. Returns True on success."""
+    try:
+        _validate_chat_id(chat_id)
+        await bot.pin_chat_message(
+            chat_id=chat_id,
+            message_id=msg_id,
+            disable_notification=True,
+        )
+        return True
+    except TypeError:
+        raise
+    except TelegramError as exc:
+        logger.error("pin_message failed chat_id=%s msg_id=%s: %s", chat_id, msg_id, exc)
+        return False

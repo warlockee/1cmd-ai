@@ -55,6 +55,7 @@ def bot():
     b.edit_message_text = AsyncMock()
     b.delete_message = AsyncMock()
     b.answer_callback_query = AsyncMock()
+    b.pin_chat_message = AsyncMock()
     return b
 
 
@@ -192,9 +193,9 @@ class TestOwnerRegistration:
 
         # store.set called with owner_id
         store.set.assert_any_call("owner_id", "42")
-        # Welcome message sent
-        bot.send_message.assert_called_once()
-        text_sent = bot.send_message.call_args[1]["text"]
+        # Welcome message + status pin sent
+        assert bot.send_message.call_count >= 1
+        text_sent = bot.send_message.call_args_list[0][1]["text"]
         assert "Welcome" in text_sent
 
 

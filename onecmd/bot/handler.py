@@ -33,7 +33,7 @@ from telegram.ext import ContextTypes
 from onecmd.auth.owner import check_owner
 from onecmd.auth.totp import STORE_KEY as TOTP_SECRET_KEY
 from onecmd.auth.totp import is_timed_out, totp_verify
-from onecmd.bot.api import answer_callback, html_escape, send_chat_action, send_message
+from onecmd.bot.api import answer_callback, delete_message, edit_message, html_escape, pin_message, send_chat_action, send_message
 from onecmd.emoji import parse as emoji_parse
 from onecmd.manager.router import ManagerRouter
 from onecmd.texts import HELP_TEXT, build_welcome_message
@@ -69,6 +69,7 @@ class _State:
     authenticated: bool = False
     last_auth_time: float = 0.0
     tracked_msgs: TrackedMessages = field(default_factory=TrackedMessages)
+    status_msg_id: int | None = None
 
 
 def _disconnect(s: _State) -> None:
@@ -133,6 +134,45 @@ async def _show_closed(bot, chat_id, s, backend):
     _disconnect(s)
     terminals = backend.list()
     await send_message(bot, chat_id, "Window closed.\n\n" + _build_list_text(terminals, ""))
+
+
+def _build_status_text(s: _State, router=None) -> str:
+    """Build the pinned status line."""
+    if getattr(s, '_ceo_mode', False):
+        mode = "\U0001f3e2 CEO mode"
+    elif s.mgr_mode:
+        mode = "\U0001f916 Manager"
+    elif s.connected:
+        alias = _load_aliases().get(s.term_id)
+        name = f"[{alias}]" if alias else s.term_name
+        mode = f"\U0001f5a5 1-on-1 {name}"
+    else:
+        mode = "\U0001f4cb Ready"
+
+    parts = [mode]
+
+    # Show LLM provider if in mgr/ceo mode
+    if s.mgr_mode and router:
+        try:
+            info = str(router.get_model_info())
+            if info and info != "None":
+                parts.append(info)
+        except Exception:
+            pass
+
+    return " | ".join(parts)
+
+
+async def _update_status(bot, chat_id: int, s: _State, router=None) -> None:
+    """Delete old status, send new one, pin it. Only way to refresh Telegram's banner."""
+    text = _build_status_text(s, router)
+    if s.status_msg_id:
+        await delete_message(bot, chat_id, s.status_msg_id)
+        s.status_msg_id = None
+    msg_id = await send_message(bot, chat_id, text)
+    if msg_id:
+        s.status_msg_id = msg_id
+        await pin_message(bot, chat_id, msg_id)
 
 
 # -- Keystroke sending -----------------------------------------------------
@@ -206,10 +246,13 @@ CmdFn = Callable  # async (bot, chat_id, text, state, backend, store, config) ->
 
 # -- Command handlers ------------------------------------------------------
 
-async def _cmd_list(bot, chat_id, _text, s, backend, _store, _config):
+async def _cmd_list(bot, chat_id, _text, s, backend, _store, _config, router=None):
     await delete_tracked_messages(bot, chat_id, s.tracked_msgs)
+    was_connected = s.connected
     _disconnect(s)
     await send_message(bot, chat_id, _build_list_text(backend.list()))
+    if was_connected:
+        await _update_status(bot, chat_id, s, router)
 
 
 async def _cmd_mgr(bot, chat_id, _text, s, _backend, _store, _config, router=None):
@@ -218,14 +261,17 @@ async def _cmd_mgr(bot, chat_id, _text, s, _backend, _store, _config, router=Non
         if not router or not router.active:
             await send_message(bot, chat_id, msg)
             return
+        _disconnect(s)
         s.mgr_mode = True
         await send_message(bot, chat_id,
                      "\U0001f916 Manager mode on.\nDot commands still work: .list .1 .exit")
+        await _update_status(bot, chat_id, s, router)
     else:
         s.mgr_mode = False
         if router:
             router.deactivate()
         await send_message(bot, chat_id, "Manager mode off.")
+        await _update_status(bot, chat_id, s, router)
 
 
 async def _cmd_debug(bot, chat_id, _text, s, _backend, _store, _config, router=None):
@@ -243,18 +289,21 @@ async def _cmd_ceo(bot, chat_id, _text, s, _backend, _store, _config, router=Non
         if not router or not router.ceo_active:
             await send_message(bot, chat_id, msg)
             return
+        _disconnect(s)
         s.mgr_mode = True
         s._ceo_mode = True
         await send_message(bot, chat_id,
                      "\U0001f3e2 CEO mode on.\n"
                      "Describe what you want to build.\n"
                      "Dot commands still work: .list .1 .exit")
+        await _update_status(bot, chat_id, s, router)
     else:
         s.mgr_mode = False
         s._ceo_mode = False
         if router:
             router.deactivate_ceo()
         await send_message(bot, chat_id, "CEO mode off.")
+        await _update_status(bot, chat_id, s, router)
 
 
 async def _cmd_exit(bot, chat_id, _text, s, _backend, _store, _config, router=None):
@@ -264,11 +313,13 @@ async def _cmd_exit(bot, chat_id, _text, s, _backend, _store, _config, router=No
         if router:
             router.deactivate_ceo()
         await send_message(bot, chat_id, "CEO mode off.")
+        await _update_status(bot, chat_id, s, router)
     elif s.mgr_mode:
         s.mgr_mode = False
         if router:
             router.deactivate()
         await send_message(bot, chat_id, "Manager mode off.")
+        await _update_status(bot, chat_id, s, router)
     else:
         await send_message(bot, chat_id, "Not in manager or CEO mode.")
 
@@ -438,6 +489,8 @@ async def _cmd_model(bot, chat_id, text, _s, _backend, _store, _config, router=N
     try:
         result = router.set_model(provider_key, None)
         await send_message(bot, chat_id, f"Switched: <code>{html_escape(result)}</code>")
+        if _s.mgr_mode:
+            await _update_status(bot, chat_id, _s, router)
     except Exception as e:
         await send_message(bot, chat_id, f"Error: {html_escape(str(e))}")
 
@@ -506,7 +559,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
 
     router = ManagerRouter(backend, config, _notify_sync)
 
-    _ROUTER_CMDS = {".mgr", ".ceo", ".exit", ".health", ".debug", ".model"}
+    _ROUTER_CMDS = {".list", ".mgr", ".ceo", ".exit", ".health", ".debug", ".model"}
 
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         bot = context.bot
@@ -541,6 +594,12 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             welcome = build_welcome_message(
                 len(terminals), _build_list_text(terminals))
             await send_message(bot, chat_id, welcome)
+            # Create and pin the status message immediately
+            status_text = _build_status_text(s)
+            msg_id = await send_message(bot, chat_id, status_text)
+            if msg_id:
+                s.status_msg_id = msg_id
+                await pin_message(bot, chat_id, msg_id)
             # Fall through so the first message still executes as a command.
             # Skip if it's /start or plain text (welcome already shows the list).
             if text.startswith("/start") or not text.startswith("."):
@@ -612,7 +671,12 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
                 return
             with lock:
                 was_mgr = s.mgr_mode
-                if s.mgr_mode:
+                was_ceo = getattr(s, '_ceo_mode', False)
+                if was_ceo:
+                    s._ceo_mode = False
+                    s.mgr_mode = False
+                    router.deactivate_ceo()
+                elif s.mgr_mode:
                     s.mgr_mode = False
                     router.deactivate()
             t = terminals[n - 1]
@@ -623,10 +687,13 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             name = f"[{html_escape(alias)}] " if alias else ""
             title_part = f" — {html_escape(t.title)}" if t.title else ""
             msg = f"\U0001f5a5 Connected to {name}{html_escape(t.name)}{title_part}"
-            if was_mgr:
+            if was_ceo:
+                msg += "\nCEO mode off."
+            elif was_mgr:
                 msg += "\nManager mode off."
             msg += "\n\nType to send keystrokes. <code>.list</code> to disconnect."
             await send_message(bot, chat_id, msg)
+            await _update_status(bot, chat_id, s, router)
             await _show_terminal(bot, chat_id, t.id, s, backend, config)
             return
 
