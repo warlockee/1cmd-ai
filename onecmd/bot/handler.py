@@ -255,23 +255,36 @@ async def _cmd_list(bot, chat_id, _text, s, backend, _store, _config, router=Non
         await _update_status(bot, chat_id, s, router)
 
 
-async def _cmd_mgr(bot, chat_id, _text, s, _backend, _store, _config, router=None):
-    if not s.mgr_mode:
-        msg = router.activate() if router else "Manager not available."
-        if not router or not router.active:
-            await send_message(bot, chat_id, msg)
-            return
-        _disconnect(s)
-        s.mgr_mode = True
-        await send_message(bot, chat_id,
-                     "\U0001f916 Manager mode on.\nDot commands still work: .list .1 .exit")
-        await _update_status(bot, chat_id, s, router)
-    else:
+def _deactivate_all(s: _State, router) -> None:
+    """Silently clear all mode state."""
+    _disconnect(s)
+    if getattr(s, '_ceo_mode', False):
+        s._ceo_mode = False
+        if router:
+            router.deactivate_ceo()
+    if s.mgr_mode:
         s.mgr_mode = False
         if router:
             router.deactivate()
+
+
+async def _cmd_mgr(bot, chat_id, _text, s, _backend, _store, _config, router=None):
+    # Already in mgr (not ceo) — toggle off
+    if s.mgr_mode and not getattr(s, '_ceo_mode', False):
+        _deactivate_all(s, router)
         await send_message(bot, chat_id, "Manager mode off.")
         await _update_status(bot, chat_id, s, router)
+        return
+    # Activate mgr (deactivate whatever was active)
+    _deactivate_all(s, router)
+    msg = router.activate() if router else "Manager not available."
+    if not router or not router.active:
+        await send_message(bot, chat_id, msg)
+        return
+    s.mgr_mode = True
+    await send_message(bot, chat_id,
+                 "\U0001f916 Manager mode on.\nDot commands still work: .list .1 .exit")
+    await _update_status(bot, chat_id, s, router)
 
 
 async def _cmd_debug(bot, chat_id, _text, s, _backend, _store, _config, router=None):
@@ -284,44 +297,34 @@ async def _cmd_debug(bot, chat_id, _text, s, _backend, _store, _config, router=N
 
 
 async def _cmd_ceo(bot, chat_id, _text, s, _backend, _store, _config, router=None):
-    if not s.mgr_mode or not getattr(s, '_ceo_mode', False):
-        msg = router.activate_ceo() if router else "CEO not available."
-        if not router or not router.ceo_active:
-            await send_message(bot, chat_id, msg)
-            return
-        _disconnect(s)
-        s.mgr_mode = True
-        s._ceo_mode = True
-        await send_message(bot, chat_id,
-                     "\U0001f3e2 CEO mode on.\n"
-                     "Describe what you want to build.\n"
-                     "Dot commands still work: .list .1 .exit")
-        await _update_status(bot, chat_id, s, router)
-    else:
-        s.mgr_mode = False
-        s._ceo_mode = False
-        if router:
-            router.deactivate_ceo()
+    # Already in ceo — toggle off
+    if getattr(s, '_ceo_mode', False):
+        _deactivate_all(s, router)
         await send_message(bot, chat_id, "CEO mode off.")
         await _update_status(bot, chat_id, s, router)
+        return
+    # Activate ceo (deactivate whatever was active)
+    _deactivate_all(s, router)
+    msg = router.activate_ceo() if router else "CEO not available."
+    if not router or not router.ceo_active:
+        await send_message(bot, chat_id, msg)
+        return
+    s.mgr_mode = True
+    s._ceo_mode = True
+    await send_message(bot, chat_id,
+                 "\U0001f3e2 CEO mode on.\n"
+                 "Describe what you want to build.\n"
+                 "Dot commands still work: .list .1 .exit")
+    await _update_status(bot, chat_id, s, router)
 
 
 async def _cmd_exit(bot, chat_id, _text, s, _backend, _store, _config, router=None):
-    if getattr(s, '_ceo_mode', False):
-        s._ceo_mode = False
-        s.mgr_mode = False
-        if router:
-            router.deactivate_ceo()
-        await send_message(bot, chat_id, "CEO mode off.")
-        await _update_status(bot, chat_id, s, router)
-    elif s.mgr_mode:
-        s.mgr_mode = False
-        if router:
-            router.deactivate()
-        await send_message(bot, chat_id, "Manager mode off.")
-        await _update_status(bot, chat_id, s, router)
-    else:
-        await send_message(bot, chat_id, "Not in manager or CEO mode.")
+    if not s.mgr_mode and not s.connected:
+        await send_message(bot, chat_id, "Not in any mode.")
+        return
+    _deactivate_all(s, router)
+    await send_message(bot, chat_id, "Mode off.")
+    await _update_status(bot, chat_id, s, router)
 
 
 async def _cmd_help(bot, chat_id, _text, _s, _backend, _store, _config):
