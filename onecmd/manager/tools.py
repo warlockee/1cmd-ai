@@ -639,6 +639,13 @@ def tool_schedule_job(ctx: dict[str, Any], args: dict[str, Any]) -> str:
 
     store, engine = _get_cron(ctx)
 
+    # Show existing jobs so the LLM can avoid duplicates
+    existing = store.list_active()
+    existing_info = ""
+    if existing:
+        lines = [f"  #{j['id']} [{j['schedule']}] {j['description'][:60]}" for j in existing]
+        existing_info = "\nExisting active jobs:\n" + "\n".join(lines)
+
     # Create
     job_id = store.create(description)
 
@@ -676,6 +683,7 @@ def tool_schedule_job(ctx: dict[str, Any], args: dict[str, Any]) -> str:
         f"Action: {action_type}\n"
         f"Config: {action_config}\n"
         f"Plan: {plan}"
+        + existing_info
     )
 
 
