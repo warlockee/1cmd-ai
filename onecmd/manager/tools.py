@@ -595,6 +595,126 @@ def tool_spawn_role(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Cron — singleton store + engine
+# ---------------------------------------------------------------------------
+
+_cron_store = None
+_cron_engine = None
+_cron_lock = threading.Lock()
+
+
+def _get_cron(ctx: dict[str, Any]):
+    """Lazy-init shared CronStore + CronEngine."""
+    global _cron_store, _cron_engine
+    with _cron_lock:
+        if _cron_store is None:
+            from onecmd.cron.store import CronStore
+            from onecmd.cron.engine import CronEngine
+
+            notify = ctx.get("notify")
+            chat_id = ctx.get("chat_id")
+
+            def _cron_notify(text: str) -> None:
+                if notify and chat_id:
+                    notify(chat_id, text)
+
+            _cron_store = CronStore()
+            _cron_engine = CronEngine(
+                store=_cron_store,
+                backend=ctx["backend"],
+                config=None,
+                notify_fn=_cron_notify,
+            )
+            _cron_engine.start()
+    return _cron_store, _cron_engine
+
+
+def tool_schedule_job(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Create, compile, and activate a cron job in one step."""
+    from onecmd.cron.compiler import compile_job
+    description = args.get("description", "")
+    if not description:
+        return "Missing description."
+
+    store, engine = _get_cron(ctx)
+
+    # Create
+    job_id = store.create(description)
+
+    # Compile (LLM translates description -> schedule + action)
+    try:
+        result = compile_job(description)
+    except Exception as e:
+        store.delete(job_id)
+        return f"Failed to compile job: {e}"
+
+    schedule = result.get("schedule", "")
+    action_type = result.get("action_type", "notify")
+    action_config = result.get("action_config", {})
+    plan = result.get("plan", "")
+
+    if not schedule:
+        store.delete(job_id)
+        return "Compiler returned empty schedule."
+
+    import json as _json
+    store.update(
+        job_id,
+        schedule=schedule,
+        action_type=action_type,
+        action_config=_json.dumps(action_config) if isinstance(action_config, dict) else str(action_config),
+        llm_plan=plan,
+        status="active",
+        error=None,
+    )
+    engine.add_job(job_id)
+
+    return (
+        f"Cron job #{job_id} created and active.\n"
+        f"Schedule: {schedule}\n"
+        f"Action: {action_type}\n"
+        f"Config: {action_config}\n"
+        f"Plan: {plan}"
+    )
+
+
+def tool_list_cron_jobs(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """List all cron jobs."""
+    store, _ = _get_cron(ctx)
+    jobs = store.list_all()
+    if not jobs:
+        return "No cron jobs."
+    lines = []
+    for j in jobs:
+        lines.append(
+            f"#{j['id']} [{j['status']}] {j['schedule'] or '(no schedule)'} "
+            f"— {j['description'][:80]}"
+        )
+        if j.get("last_run_at"):
+            import datetime
+            dt = datetime.datetime.fromtimestamp(j["last_run_at"])
+            lines.append(f"   Last run: {dt:%Y-%m-%d %H:%M} — {j.get('last_result', '')[:60]}")
+        if j.get("error"):
+            lines.append(f"   Error: {j['error'][:80]}")
+    return "\n".join(lines)
+
+
+def tool_cancel_cron_job(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Cancel/delete a cron job by ID."""
+    job_id = args.get("job_id")
+    if job_id is None:
+        return "Missing job_id."
+    job_id = int(job_id)
+    store, engine = _get_cron(ctx)
+    job = store.get(job_id)
+    if not job:
+        return f"Job #{job_id} not found."
+    engine.remove_job(job_id)
+    store.delete(job_id)
+    return f"Job #{job_id} deleted."
+
+
 def tool_restart_service(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Restart a system service (delegated to service_restart module)."""
     from onecmd.manager.service_restart import tool_restart_service as _impl
@@ -629,6 +749,9 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "read_sop": tool_read_sop,
     "send_message_to_user": tool_send_message_to_user,
     "spawn_role": tool_spawn_role,
+    "schedule_job": tool_schedule_job,
+    "list_cron_jobs": tool_list_cron_jobs,
+    "cancel_cron_job": tool_cancel_cron_job,
     "restart_service": tool_restart_service,
     "detect_crashes": tool_detect_crashes,
     "check_resources": tool_check_resources,
@@ -760,6 +883,22 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 role_instructions="Full instructions for the AI agent. Describe its role, specific tasks, "
                                   "and deliverables. End with: 'When done, print TASK COMPLETE.'"),
          ["role_name", "project_dir", "role_instructions"])},
+    {"name": "schedule_job",
+     "description": "Schedule a recurring cron job. Describe what to do and when in plain English "
+        "(e.g. 'check disk space every 2 hours', 'restart nginx at 3am daily'). "
+        "The LLM compiles it into a cron schedule and action automatically.",
+     "input_schema": _schema(
+         _props(description="Plain English description of what to do and how often. "
+                            "Include the terminal name/id if a command should run in a specific terminal."),
+         ["description"])},
+    {"name": "list_cron_jobs",
+     "description": "List all scheduled cron jobs with their status, schedule, and last run time.",
+     "input_schema": _schema()},
+    {"name": "cancel_cron_job",
+     "description": "Cancel and delete a scheduled cron job by its ID.",
+     "input_schema": _schema(
+         {"job_id": {"type": "integer", "description": "Cron job ID to cancel"}},
+         ["job_id"])},
     {"name": "restart_service",
      "description": "Restart a system service (systemd on Linux, brew services on macOS). "
         "ALWAYS ask the user for confirmation first unless the service is in the auto-restart list "

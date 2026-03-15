@@ -138,10 +138,12 @@ class CronEngine:
         store: CronStore,
         backend: _Backend | None = None,
         config: Config | None = None,
+        notify_fn: Any = None,
     ) -> None:
         self._store = store
         self._backend = backend
         self._config = config
+        self._notify_fn = notify_fn
         self._active_ids: set[int] = set()
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -286,5 +288,61 @@ class CronEngine:
         return f"Notified: {message}"
 
     def _exec_smart_task(self, config: dict[str, Any]) -> str:
-        """Placeholder for future LLM-based smart tasks."""
-        return "smart_task: not yet implemented"
+        """Run an LLM-judged task: capture terminals, ask LLM, notify user."""
+        prompt = config.get("prompt", "")
+        if not prompt:
+            return "Missing prompt in action_config"
+
+        # Capture terminal context
+        context_parts = []
+        if self._backend is not None:
+            try:
+                terminals = self._backend.list()
+                for t in terminals[:10]:  # cap at 10
+                    cap = self._backend.capture(t.id)
+                    if cap:
+                        lines = cap.strip().split("\n")
+                        if len(lines) > 30:
+                            lines = lines[-30:]
+                        context_parts.append(
+                            f"[Terminal {t.id} — {t.name}]\n" + "\n".join(lines)
+                        )
+            except Exception as e:
+                context_parts.append(f"(failed to capture terminals: {e})")
+
+        terminal_context = "\n\n".join(context_parts) if context_parts else "(no terminals)"
+
+        # Call LLM
+        try:
+            from onecmd.manager.llm import ProviderManager
+            pm = ProviderManager()
+            provider = pm.active
+            model_defaults = {
+                "google": "gemini-3-flash-preview",
+                "anthropic": "claude-sonnet-4-20250514",
+                "openai-codex": "gpt-5.3-codex",
+            }
+            model = model_defaults.get(pm.active_name, "claude-sonnet-4-20250514")
+
+            system = (
+                "You are a terminal monitoring assistant. "
+                "The user has a scheduled check. Analyze the terminal output and "
+                "provide a brief summary. Plain text only, no markdown. Max 300 words."
+            )
+            user_msg = f"Task: {prompt}\n\nTerminal snapshots:\n{terminal_context}"
+
+            _, text_parts, _, _ = provider.chat(
+                model, system, [], [{"role": "user", "content": user_msg}], 1024,
+            )
+            summary = "\n".join(text_parts).strip() or "(no response from LLM)"
+        except Exception as e:
+            summary = f"LLM error: {e}"
+
+        # Notify user
+        if self._notify_fn:
+            try:
+                self._notify_fn(f"[Cron] {prompt[:50]}\n\n{summary}")
+            except Exception as e:
+                logger.warning("CronEngine: notify failed: %s", e)
+
+        return summary[:500]
