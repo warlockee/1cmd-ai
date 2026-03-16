@@ -701,6 +701,15 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             return
 
         # 6. CEO / Manager mode — route to LLM agent
+        # Catch plain-text exit words so panicking users aren't trapped
+        if s.mgr_mode and text.strip().lower() in {
+            "stop", "exit", "quit", "cancel", "stop it",
+        }:
+            _deactivate_all(s, router)
+            await send_message(bot, chat_id, "Mode off.")
+            await _update_status(bot, chat_id, s, router)
+            return
+
         if s.mgr_mode and not text.startswith("."):
             if not text.strip():
                 return
