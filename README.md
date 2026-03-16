@@ -94,6 +94,36 @@ To add your own rules, create `.onecmd/custom_rules.md`:
 
 Custom rules are appended to the default SOP automatically — no need to edit the base file.
 
+### Custom Skills (.md files)
+
+Any `.md` file you drop into `.onecmd/` is automatically picked up and added to the AI agent's context. This means you can write runbooks, checklists, or procedures in plain markdown, and the agent will know about them.
+
+```
+.onecmd/
+├── agent_sop.md        # system (don't edit)
+├── custom_rules.md     # your rules
+├── deploy.md           # your skill — auto-loaded
+└── incident-response.md # your skill — auto-loaded
+```
+
+Example `.onecmd/deploy.md`:
+
+```markdown
+# Deploy Procedure
+
+1. Read the dev-server terminal, check for errors
+2. Run `npm test` in the build terminal
+3. If tests pass, run `./deploy.sh production`
+4. Watch for "Deploy complete" in the output
+5. If it fails, check logs and notify me
+```
+
+That's it. Next time you tell the agent "deploy to prod," it will follow your procedure.
+
+**Do you need this?** Probably not. The AI manager is already good at following natural language instructions on the fly. Custom skills are useful when you have a specific multi-step procedure you want followed consistently — a deployment checklist, an incident response runbook, a server setup sequence. If you're just telling the agent "restart nginx" or "check the logs," you don't need a skill file for that.
+
+**Limits:** Each file is capped at 8,000 characters, total budget is 32,000 characters across all extra files. Files whose content is all comments are ignored. System files (`agent_sop.md`, `custom_rules.md`, `ai_personality.md`, `crash_patterns.md`, `cron_prompt.md`) are excluded from auto-pickup — they have their own loading paths.
+
 ### Manager commands
 
 | Command | Action |
