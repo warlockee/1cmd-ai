@@ -866,6 +866,67 @@ input::placeholder, textarea::placeholder {
 
 .cron-actions .btn { margin-left: 4px; }
 
+/* Description editor modal */
+.desc-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.desc-modal {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    width: min(640px, 90vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .4);
+}
+
+.desc-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.desc-modal-buttons { display: flex; gap: 6px; }
+
+.desc-editor-wrap {
+    flex: 1;
+    min-height: 200px;
+    overflow: auto;
+}
+
+.desc-editor-wrap .CodeMirror {
+    height: 100%;
+    min-height: 200px;
+    font-size: 13px;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.desc-textarea-fallback {
+    width: 100%;
+    min-height: 200px;
+    padding: 12px;
+    background: var(--bg-inset);
+    color: var(--text);
+    border: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    resize: vertical;
+    outline: none;
+}
+
 /* ---------------------------------------------------------------
  *  Inline edit input (shared)
  * --------------------------------------------------------------- */

@@ -150,17 +150,19 @@ window.initCron = function () {
         });
     }
 
-    /* --- inline edit --- */
+    /* --- inline edit (schedule only) --- */
 
     function inlineEdit(span, field) {
+        if (field === 'description') { openDescEditor(span); return; }
+
         var id = span.dataset.id;
         var job = jobs.find(function (j) { return j.id == id; }) || {};
-        var current = field === 'description' ? (job.description || '') : (job.schedule || '');
+        var current = job.schedule || '';
 
         var inp = document.createElement('input');
         inp.type = 'text';
         inp.value = current;
-        inp.className = 'inline-edit-input' + (field === 'schedule' ? ' mono' : '');
+        inp.className = 'inline-edit-input mono';
         span.replaceWith(inp);
         inp.focus();
         inp.select();
@@ -168,9 +170,7 @@ window.initCron = function () {
         async function commit() {
             var v = inp.value.trim();
             if (v && v !== current) {
-                var body = {};
-                body[field] = v;
-                await api('/' + id, { method: 'PUT', body: JSON.stringify(body) });
+                await api('/' + id, { method: 'PUT', body: JSON.stringify({ schedule: v }) });
             }
             loadJobs();
         }
@@ -180,6 +180,94 @@ window.initCron = function () {
             if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
             if (e.key === 'Escape') { inp.value = current; inp.blur(); }
         });
+    }
+
+    /* --- description editor (floating modal with CodeMirror) --- */
+
+    var descOverlay = null;
+
+    function openDescEditor(span) {
+        var id = span.dataset.id;
+        var job = jobs.find(function (j) { return j.id == id; }) || {};
+        var current = job.description || '';
+
+        // Remove existing overlay
+        if (descOverlay) descOverlay.remove();
+
+        // Build modal
+        descOverlay = document.createElement('div');
+        descOverlay.className = 'desc-overlay';
+        descOverlay.innerHTML =
+            '<div class="desc-modal">' +
+                '<div class="desc-modal-header">' +
+                    '<span>Edit description</span>' +
+                    '<div class="desc-modal-buttons">' +
+                        '<button class="btn btn-primary btn-sm desc-save">Save</button>' +
+                        '<button class="btn btn-ghost btn-sm desc-close">Close</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="desc-editor-wrap"></div>' +
+            '</div>';
+        document.body.appendChild(descOverlay);
+
+        var wrap = descOverlay.querySelector('.desc-editor-wrap');
+        var cm = null;
+        var textarea = null;
+
+        if (typeof CodeMirror !== 'undefined') {
+            cm = CodeMirror(wrap, {
+                value: current,
+                mode: 'markdown',
+                theme: 'material-darker',
+                lineWrapping: true,
+                autofocus: true,
+                viewportMargin: Infinity,
+            });
+            setTimeout(function () { cm.refresh(); }, 50);
+        } else {
+            textarea = document.createElement('textarea');
+            textarea.value = current;
+            textarea.className = 'desc-textarea-fallback';
+            wrap.appendChild(textarea);
+            textarea.focus();
+        }
+
+        function getValue() {
+            return cm ? cm.getValue().trim() : textarea.value.trim();
+        }
+
+        async function save() {
+            var v = getValue();
+            if (v && v !== current) {
+                await api('/' + id, { method: 'PUT', body: JSON.stringify({ description: v }) });
+                window.showToast('Saved', 'success');
+            }
+            descOverlay.remove();
+            descOverlay = null;
+            loadJobs();
+        }
+
+        descOverlay.querySelector('.desc-save').addEventListener('click', save);
+        descOverlay.querySelector('.desc-close').addEventListener('click', function () {
+            descOverlay.remove();
+            descOverlay = null;
+        });
+
+        // Click outside modal = close
+        descOverlay.addEventListener('click', function (e) {
+            if (e.target === descOverlay) {
+                descOverlay.remove();
+                descOverlay = null;
+            }
+        });
+
+        // Ctrl/Cmd+S = save
+        if (cm) {
+            cm.setOption('extraKeys', {
+                'Cmd-S': save,
+                'Ctrl-S': save,
+            });
+        }
     }
 
     /* --- data --- */
