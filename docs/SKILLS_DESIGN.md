@@ -32,3 +32,15 @@
 - Prefer bootstrap plus opt-in additions over silent default loading.
 - Respect existing tool guardrails. Any action that already requires approval or confirmation keeps those constraints inside a skill.
 - Document assumptions, required inputs, and extension points in the skill README so maintenance stays auditable.
+
+## Approval Model
+
+- Approval in skills reuses the existing 1cmd safety model rather than introducing a new approval engine.
+- There are two current enforcement paths:
+  - **Tool-level confirmation flags** (for example, `restart_service` requires `confirmed=true`).
+  - **Dispatch guardrails** (for example, dangerous `send_command` patterns are blocked and require explicit user confirmation before retry).
+- Practical policy:
+  - **Low-risk read/documentation steps** run directly.
+  - **State-changing or destructive steps** must pass existing confirmation/guard checks.
+- Skill authors should mark risky steps clearly in `README.md` and keep confirmation points explicit in step arguments.
+- Future extension (compatible with current model): add per-step metadata like `approval: none|required` and map it to chat-level `/approve` or button flows without changing core tool guardrails.
