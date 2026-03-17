@@ -198,6 +198,17 @@ Skills mode can start with only the bootstrap skill at `.onecmd/skills/new-skill
 
 Register skills in `.onecmd/skills/skills.json`, then run `/reload` in Telegram to regenerate slash commands from the current registry.
 
+`SKILL.json` now supports bounded runtime policy fields in addition to legacy `steps[]` workflows:
+
+- `mode`: `domain` or `capability` (`domain` by default)
+- `max_rounds`: bounded LLM loop limit, default `3` for domain skills
+- `max_steps`: optional hard cap, still constrained by global `--skills-max-steps`
+- `failure_policy`: `stop_and_report` or `fallback` (`stop_and_report` by default)
+- `resources[]`: optional structured read-only context entries
+- `scripts[]`: optional structured executable helper entries
+
+Legacy skills that only define `steps[]` continue to work. Domain skills stop and report when they exhaust their configured bounds instead of forcing more execution.
+
 Terminal output is sent as a single message by default. Each new command or refresh **deletes the previous output messages** and sends fresh ones, creating a clean "live terminal" view rather than spamming the chat.
 
 If your terminal produces very long output (e.g. build logs) and you want to see all of it, enable splitting:

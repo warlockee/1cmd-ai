@@ -7,6 +7,64 @@ from typing import Any
 
 
 _HEADING_RE = re.compile(r"^\s*#\s+(.*\S)\s*$")
+_VALID_MODES = {"domain", "capability"}
+_VALID_FAILURE_POLICIES = {"stop_and_report", "fallback"}
+
+
+def _is_structured_section(items: Any) -> bool:
+    return isinstance(items, list) and all(isinstance(item, dict) for item in items)
+
+
+def _normalize_skill_data(data: dict[str, Any], path: Path) -> dict[str, Any] | None:
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+
+    steps = data.get("steps", [])
+    if not isinstance(steps, list):
+        return None
+
+    mode = data.get("mode", "domain")
+    if not isinstance(mode, str):
+        return None
+    mode = mode.strip().lower()
+    if mode not in _VALID_MODES:
+        return None
+
+    failure_policy = data.get("failure_policy", "stop_and_report")
+    if not isinstance(failure_policy, str):
+        return None
+    failure_policy = failure_policy.strip().lower()
+    if failure_policy not in _VALID_FAILURE_POLICIES:
+        return None
+
+    max_rounds = data.get("max_rounds")
+    if max_rounds is None and mode == "domain":
+        max_rounds = 3
+    if max_rounds is not None and (not isinstance(max_rounds, int) or max_rounds < 1):
+        return None
+
+    max_steps = data.get("max_steps")
+    if max_steps is not None and (not isinstance(max_steps, int) or max_steps < 1):
+        return None
+
+    resources = data.get("resources", [])
+    scripts = data.get("scripts", [])
+    if not _is_structured_section(resources) or not _is_structured_section(scripts):
+        return None
+
+    return {
+        **data,
+        "name": name.strip(),
+        "mode": mode,
+        "steps": steps,
+        "max_rounds": max_rounds,
+        "max_steps": max_steps,
+        "failure_policy": failure_policy,
+        "resources": resources,
+        "scripts": scripts,
+        "_file": str(path),
+    }
 
 
 def _parse_readme_metadata(path: Path) -> tuple[str, str]:
@@ -45,11 +103,7 @@ def _read_skill_json(path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(data, dict):
         return None
-    name = data.get("name")
-    steps = data.get("steps")
-    if not isinstance(name, str) or not name.strip() or not isinstance(steps, list):
-        return None
-    return data
+    return _normalize_skill_data(data, path)
 
 
 def _build_skill_metadata(skill_path: Path) -> dict[str, Any] | None:
@@ -74,10 +128,7 @@ def _build_skill_metadata(skill_path: Path) -> dict[str, Any] | None:
         "slash": True,
         "command": None,
         "path": str(skill_path),
-        "skill": {
-            **skill_data,
-            "_file": str(skill_path),
-        },
+        "skill": skill_data,
     }
 
 

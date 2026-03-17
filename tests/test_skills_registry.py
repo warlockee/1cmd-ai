@@ -131,6 +131,9 @@ def test_repo_bootstrap_registry_only_enables_new_skill():
     assert [skill["name"] for skill in skills] == ["new-skill"]
     assert skills[0]["enabled"] is True
     assert skills[0]["slash"] is True
+    assert skills[0]["skill"]["mode"] == "domain"
+    assert skills[0]["skill"]["max_rounds"] == 3
+    assert skills[0]["skill"]["failure_policy"] == "stop_and_report"
 
 
 def test_repo_bootstrap_skill_and_design_docs_exist():
