@@ -1,23 +1,23 @@
 {
   "name": "new-skill",
-  "description": "Bootstrap a new skill scaffold with a deterministic doc-first workflow.",
+  "description": "Bootstrap a new skill scaffold with deterministic, bounded, explicit-input authoring rules.",
   "inputs": {
     "name": {
       "type": "string",
       "required": true,
-      "description": "Required skill name in kebab-case."
+      "description": "Required explicit skill name in kebab-case; do not infer or invent it."
     },
     "description": {
       "type": "string",
       "required": false,
-      "description": "Optional one-line summary for the skill."
+      "description": "Optional one-line summary for the skill; keep it concrete and implementation-neutral."
     },
     "template": {
       "type": "string",
       "required": false,
       "default": "doc",
       "enum": ["doc", "ops", "full"],
-      "description": "Scaffold shape. Current runtime stays doc-first; use README guidance for ops/full extensions."
+      "description": "Scaffold shape. Current runtime stays doc-first; use README guidance for deterministic ops/full extensions only when explicitly needed."
     }
   },
   "steps": [
@@ -32,7 +32,7 @@
     {
       "tool": "send_message_to_user",
       "args": {
-        "text": "New skill scaffold workflow: 1) confirm a kebab-case name and choose template doc, ops, or full, 2) create .onecmd/skills/<name>/SKILL.json and README.md, 3) keep SKILL.json as a short deterministic SOP using existing manager tools only, 4) add resources only for reusable reference context, 5) add scripts only for repeatable side effects that plain steps cannot express, 6) update .onecmd/skills/skills.json, then run /reload to sync slash commands."
+        "text": "New skill scaffold rules: 1) confirm explicit inputs first: required kebab-case name, optional description, and template doc, ops, or full, 2) create .onecmd/skills/<name>/SKILL.json and README.md, 3) keep SKILL.json short, linear, deterministic, and bounded, using existing manager tools only with explicit args and no branching or hidden assumptions, 4) add a resource only for stable reusable reference context the model may need to read, 5) add a script only for repeatable deterministic side effects or validation that plain steps cannot safely express, 6) any risky, state-changing, or destructive action must rely on existing confirmation or guardrail tools and must document the approval requirement in README.md, 7) never generate raw dangerous command patterns in skill steps, especially direct send_command payloads like rm -rf, git push --force, git reset --hard, shutdown, reboot, DROP TABLE, or DELETE FROM, 8) update .onecmd/skills/skills.json, then run /reload to sync slash commands."
       }
     }
   ]
