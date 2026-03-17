@@ -36,6 +36,7 @@ import sys
 
 from onecmd.config import parse_config
 from onecmd.store import Store
+from onecmd.auth.codex import CodexAuthError, preflight_codex_credentials
 from onecmd.auth.totp import totp_setup
 from onecmd.terminal.scope import detect_scope
 from onecmd.terminal.backend import create_backend
@@ -81,6 +82,11 @@ def main() -> None:
         log.warning("OTP authentication disabled (--use-weak-security)")
     elif otp_active:
         log.info("OTP authentication active (timeout=%ds)", config.otp_timeout)
+
+    try:
+        preflight_codex_credentials(logger=log)
+    except CodexAuthError:
+        pass
 
     # 7. Detect terminal scope (tmux session or macOS parent PID).
     scope = detect_scope()
