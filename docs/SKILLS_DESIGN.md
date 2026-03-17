@@ -13,7 +13,33 @@
 - **Resource**: reusable context read by the model (docs, examples, memory snippets, local files, dynamic context providers).
 - **Script / Tool action**: concrete executable actions (existing `tools/dispatch`, optional scripts).
 - **Approval**: risk gate for sensitive actions, reusing existing confirmation/guardrail mechanisms.
-- **README.md**: human-facing purpose, boundaries, examples, and risk notes.
+- **README.md**: human-facing purpose, boundaries, examples, dependencies, and risk notes.
+
+### Resource (explicit definition)
+
+Resource is **read-only context**. It should help the model understand domain background, constraints, and examples before it acts.
+
+Typical resource content:
+- Task examples / few-shot examples
+- Static context docs and policy notes
+- Dynamic background data (generated at read time), such as:
+  - current repository file tree / module structure
+  - selected file contents or summaries
+  - current branch / commit hash / version tag
+  - environment snapshots needed for decision-making
+
+Resource should not perform side effects. If something changes system state, it belongs to script/tool execution, not resource.
+
+### Script (explicit definition)
+
+Script is an **executable action surface**. It is used when repeatable side effects are required.
+
+Typical script use:
+- generation/build/validation commands
+- deployment/check/restart workflows
+- deterministic code transforms or checks
+
+Scripts may rely on external runtime dependencies. Those dependencies must be documented in `README.md` (for example: Python venv requirements, npm/node CLI requirements, required binaries, environment variables, and minimum versions).
 
 ## Skill Types
 
