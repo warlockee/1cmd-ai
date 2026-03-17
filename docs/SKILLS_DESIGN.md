@@ -4,13 +4,40 @@
 
 - Skills mode should not preload a large library of default domain skills.
 - The default install should ship only one bootstrap creator skill: `new-skill`.
+- A skill is an abstraction of **capability boundaries** (`resource`, `script`, `approval`, policy), not just a hardcoded SOP.
 - New skills should be added intentionally through the registry, then exposed with `/reload`.
+
+## Core Skill Elements
+
+- **Skill metadata (`SKILL.json`)**: name, mode, constraints, parameters, limits.
+- **Resource**: reusable context read by the model (docs, examples, memory snippets, local files, dynamic context providers).
+- **Script / Tool action**: concrete executable actions (existing `tools/dispatch`, optional scripts).
+- **Approval**: risk gate for sensitive actions, reusing existing confirmation/guardrail mechanisms.
+- **README.md**: human-facing purpose, boundaries, examples, and risk notes.
+
+## Skill Types
+
+### 1) Domain Skill (task-oriented)
+
+- Goal: solve a concrete domain task with bounded autonomy.
+- Uses resource and/or script, with LLM planning inside a constrained loop.
+- Recommended defaults:
+  - `max_rounds <= 3`
+  - `failure_policy = stop_and_report`
+- Behavior: if it cannot finish safely within bounds, stop and return a clear conclusion and next steps (no hard forcing).
+
+### 2) Capability Skill (ability package)
+
+- Goal: describe and expose what the skill can do, with examples and optional tools.
+- README/description explains scope and usage; resources provide background and examples.
+- Scripts/tools are optional selectable actions; model chooses based on user intent.
+- Step/round limits still come from `SKILL.json` policy fields.
 
 ## File Separation
 
-- `SKILL.json` is machine-facing metadata and the deterministic workflow executed by `run_skill`.
-- `README.md` is human-facing guidance: scope, decision rules, templates, and extension notes.
-- Keep the JSON short and stable. Put explanation and author guidance in the README.
+- `SKILL.json` is machine-facing policy and metadata.
+- `README.md` is human-facing guidance (what/when/why/how to use).
+- Keep JSON stable and enforceable; keep prose and rationale in README.
 
 ## Discovery And Reload
 
@@ -21,26 +48,30 @@
 
 ## Execution Model
 
-- A skill is a deterministic short SOP: ordered `steps`, each with a `tool` and `args`.
-- Runtime behavior is intentionally simple: variable substitution, bounded step count, no conditional branching.
-- Skills may call existing manager tools through `run_skill`; they should rely on stable tool actions and minimal prompt interpretation.
-- Doc-first skills are the default. Add resources or scripts only when the workflow needs reusable context or exact side effects.
+- Avoid treating every skill as a fixed SOP.
+- Skills can run in bounded LLM-guided loops constrained by policy (`max_rounds`, `max_steps`, failure policy).
+- `resource` provides context; `script/tool` provides action surface.
+- Recommended policy fields in `SKILL.json`:
+  - `mode: domain | capability`
+  - `max_rounds` (e.g., 3)
+  - `max_steps` (optional hard cap)
+  - `failure_policy: stop_and_report | fallback`
+
+## Approval Model
+
+- Approval reuses existing 1cmd safety mechanisms rather than introducing a second engine.
+- Current enforcement paths:
+  - **Tool-level confirmation flags** (for example, `restart_service` requires `confirmed=true`).
+  - **Dispatch guardrails** (dangerous `send_command` payloads are blocked and require explicit confirmation before retry).
+- Policy:
+  - Low-risk read/documentation steps can run directly.
+  - State-changing, privileged, or destructive actions must pass confirmation/guard checks.
+- Skill authors should mark risky actions in `README.md` and keep approval expectations explicit in skill metadata/arguments.
 
 ## Governance
 
 - Keep enabled skills narrow, reviewable, and explicit in `skills.json`.
 - Prefer bootstrap plus opt-in additions over silent default loading.
-- Respect existing tool guardrails. Any action that already requires approval or confirmation keeps those constraints inside a skill.
-- Document assumptions, required inputs, and extension points in the skill README so maintenance stays auditable.
-
-## Approval Model
-
-- Approval in skills reuses the existing 1cmd safety model rather than introducing a new approval engine.
-- There are two current enforcement paths:
-  - **Tool-level confirmation flags** (for example, `restart_service` requires `confirmed=true`).
-  - **Dispatch guardrails** (for example, dangerous `send_command` patterns are blocked and require explicit user confirmation before retry).
-- Practical policy:
-  - **Low-risk read/documentation steps** run directly.
-  - **State-changing or destructive steps** must pass existing confirmation/guard checks.
-- Skill authors should mark risky steps clearly in `README.md` and keep confirmation points explicit in step arguments.
-- Future extension (compatible with current model): add per-step metadata like `approval: none|required` and map it to chat-level `/approve` or button flows without changing core tool guardrails.
+- Respect existing tool guardrails; skills must not bypass them.
+- Make assumptions, required inputs, failure limits, and escalation paths explicit for auditability.
+- Design target: "bounded autonomy, explicit risk control, clear user-facing outcomes."
