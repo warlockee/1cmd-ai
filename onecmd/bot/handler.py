@@ -36,6 +36,7 @@ from onecmd.auth.totp import is_timed_out, totp_verify
 from onecmd.bot.api import answer_callback, delete_message, edit_message, html_escape, pin_message, send_chat_action, send_message
 from onecmd.emoji import parse as emoji_parse
 from onecmd.manager.router import ManagerRouter
+from onecmd.manager.skills_registry import load_skills_metadata
 from onecmd.texts import HELP_TEXT, build_welcome_message
 from onecmd.terminal.display import (
     TrackedMessages,
@@ -189,46 +190,28 @@ def _build_telegram_commands(config: Config) -> tuple[list[BotCommand], list[str
         BotCommand("start", "Show terminals"),
         BotCommand("reload", "Reload bot commands"),
     ]
-    warnings: list[str] = []
     seen = {cmd.command for cmd in commands}
-    skills_dir = Path(config.skills_dir)
-    if not skills_dir.exists():
-        warnings.append(f"skills dir missing: {skills_dir}")
-        return commands, warnings
-    if not skills_dir.is_dir():
-        warnings.append(f"skills dir is not a directory: {skills_dir}")
-        return commands, warnings
+    skills, warnings = load_skills_metadata(config.skills_dir)
 
-    invalid_count = 0
     duplicate_count = 0
-    for path in sorted(skills_dir.glob("*.json")):
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            invalid_count += 1
+    for skill in skills:
+        if not skill.get("enabled", True) or not skill.get("slash", True):
             continue
-        if not isinstance(data, dict):
-            invalid_count += 1
-            continue
-        name = data.get("name")
-        if not isinstance(name, str) or not name.strip():
-            invalid_count += 1
-            continue
-        command_name = _sanitize_skill_command_name(name)
+        name = str(skill["name"]).strip()
+        raw_command_name = skill.get("command") or name
+        command_name = _sanitize_skill_command_name(str(raw_command_name))
         if not command_name:
-            invalid_count += 1
+            warnings.append(f"ignored invalid skill command for {name}")
             continue
         if command_name in seen:
             duplicate_count += 1
             continue
-        desc = data.get("description")
+        desc = skill.get("description")
         if not isinstance(desc, str) or not desc.strip():
             desc = f"Run skill {name.strip()}"
         commands.append(BotCommand(command_name, desc.strip()[:256]))
         seen.add(command_name)
 
-    if invalid_count:
-        warnings.append(f"ignored {invalid_count} invalid skill file(s)")
     if duplicate_count:
         warnings.append(f"ignored {duplicate_count} duplicate skill command(s)")
     return commands, warnings

@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
+from onecmd.manager.skills_registry import load_skills_metadata
+
 
 _VAR_RE = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*)$")
 
@@ -13,32 +15,9 @@ def _skills_dir(ctx: dict[str, Any]) -> Path:
     p = str(ctx.get("skills_dir") or ".onecmd/skills")
     return Path(p)
 
-
-def _load_skill(path: Path) -> dict[str, Any] | None:
-    try:
-        data = json.loads(path.read_text())
-    except Exception:
-        return None
-    if not isinstance(data, dict):
-        return None
-    name = data.get("name")
-    steps = data.get("steps")
-    if not isinstance(name, str) or not name.strip() or not isinstance(steps, list):
-        return None
-    return data
-
-
 def _load_all_skills(ctx: dict[str, Any]) -> list[dict[str, Any]]:
-    root = _skills_dir(ctx)
-    if not root.exists():
-        return []
-    skills: list[dict[str, Any]] = []
-    for f in sorted(root.glob("*.json")):
-        s = _load_skill(f)
-        if s:
-            s["_file"] = str(f)
-            skills.append(s)
-    return skills
+    skills, _warnings = load_skills_metadata(_skills_dir(ctx))
+    return [item["skill"] for item in skills if item.get("enabled", True)]
 
 
 def _resolve_vars(obj: Any, inputs: dict[str, Any]) -> Any:

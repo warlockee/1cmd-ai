@@ -310,6 +310,74 @@ class TestReloadCommand:
         assert "Reloaded 4 commands" in text_sent
         assert "/reload" in text_sent
 
+    def test_reload_uses_registry_enabled_slash_and_custom_command(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        deploy_dir = skills_dir / "deploy-check"
+        deploy_dir.mkdir()
+        (deploy_dir / "SKILL.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        hidden_dir = skills_dir / "hidden-skill"
+        hidden_dir.mkdir()
+        (hidden_dir / "SKILL.json").write_text(json.dumps({
+            "name": "hidden-skill",
+            "steps": [],
+        }))
+        noslash_dir = skills_dir / "no-slash"
+        noslash_dir.mkdir()
+        (noslash_dir / "SKILL.json").write_text(json.dumps({
+            "name": "no-slash",
+            "steps": [],
+        }))
+        (skills_dir / "skills.json").write_text(json.dumps({
+            "version": 1,
+            "skills": [
+                {"name": "deploy-check", "command": "ship_it", "description": "Ship it"},
+                {"name": "hidden-skill", "enabled": False},
+                {"name": "no-slash", "slash": False},
+            ],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skill_ship_it"]
+
+    def test_reload_warns_on_invalid_registry_entries(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        valid_dir = skills_dir / "deploy-check"
+        valid_dir.mkdir()
+        (valid_dir / "SKILL.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        (skills_dir / "skills.json").write_text(json.dumps({
+            "version": 1,
+            "skills": [
+                {"name": "deploy-check", "description": "Deploy"},
+                {"name": "missing-skill"},
+                {"name": "deploy-check", "command": ""},
+                "bad-entry",
+            ],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skill_deploy_check"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Warning:" in text_sent
+        assert "invalid registry entries" in text_sent
+
     def test_reload_warns_when_skills_dir_missing(self, tmp_path, bot, store, backend, config):
         store._data["owner_id"] = "1"
         missing_dir = tmp_path / "missing-skills"
