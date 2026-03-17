@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import ContextTypes
 
 from onecmd.auth.owner import check_owner
@@ -56,6 +56,8 @@ ALIASES_PATH = ".onecmd/aliases.json"
 DOT_N_RE = re.compile(r"^\.(\d+)$")
 REFRESH_CALLBACK = "refresh"
 _START_TIME = time.time()
+_SKILL_COMMAND_PREFIX = "skill_"
+_MAX_TELEGRAM_COMMAND_LEN = 32
 
 # -- State -----------------------------------------------------------------
 
@@ -161,6 +163,75 @@ def _build_status_text(s: _State, router=None) -> str:
             pass
 
     return " | ".join(parts)
+
+
+def _normalize_command_key(text: str) -> str:
+    raw = text.strip().split()[0] if text.strip() else ""
+    if raw.startswith("/"):
+        return "/" + raw[1:].split("@", 1)[0].lower()
+    return raw.lower()
+
+
+def _sanitize_skill_command_name(name: str) -> str:
+    sanitized = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")
+    sanitized = re.sub(r"_+", "_", sanitized)
+    if not sanitized:
+        return ""
+    max_name_len = _MAX_TELEGRAM_COMMAND_LEN - len(_SKILL_COMMAND_PREFIX)
+    sanitized = sanitized[:max_name_len].rstrip("_")
+    if not sanitized:
+        return ""
+    return f"{_SKILL_COMMAND_PREFIX}{sanitized}"
+
+
+def _build_telegram_commands(config: Config) -> tuple[list[BotCommand], list[str]]:
+    commands = [
+        BotCommand("start", "Show terminals"),
+        BotCommand("reload", "Reload bot commands"),
+    ]
+    warnings: list[str] = []
+    seen = {cmd.command for cmd in commands}
+    skills_dir = Path(config.skills_dir)
+    if not skills_dir.exists():
+        warnings.append(f"skills dir missing: {skills_dir}")
+        return commands, warnings
+    if not skills_dir.is_dir():
+        warnings.append(f"skills dir is not a directory: {skills_dir}")
+        return commands, warnings
+
+    invalid_count = 0
+    duplicate_count = 0
+    for path in sorted(skills_dir.glob("*.json")):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            invalid_count += 1
+            continue
+        if not isinstance(data, dict):
+            invalid_count += 1
+            continue
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            invalid_count += 1
+            continue
+        command_name = _sanitize_skill_command_name(name)
+        if not command_name:
+            invalid_count += 1
+            continue
+        if command_name in seen:
+            duplicate_count += 1
+            continue
+        desc = data.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            desc = f"Run skill {name.strip()}"
+        commands.append(BotCommand(command_name, desc.strip()[:256]))
+        seen.add(command_name)
+
+    if invalid_count:
+        warnings.append(f"ignored {invalid_count} invalid skill file(s)")
+    if duplicate_count:
+        warnings.append(f"ignored {duplicate_count} duplicate skill command(s)")
+    return commands, warnings
 
 
 async def _update_status(bot, chat_id: int, s: _State, router=None) -> None:
@@ -498,6 +569,24 @@ async def _cmd_model(bot, chat_id, text, _s, _backend, _store, _config, router=N
         await send_message(bot, chat_id, f"Error: {html_escape(str(e))}")
 
 
+async def _cmd_reload_commands(bot, chat_id, _text, _s, _backend, _store, config, router=None):
+    commands, warnings = _build_telegram_commands(config)
+    try:
+        await bot.set_my_commands(commands)
+    except Exception as exc:
+        logger.warning("set_my_commands failed: %s", exc)
+        await send_message(bot, chat_id, f"Failed to reload commands: {html_escape(str(exc))}")
+        return
+
+    names = [f"/{command.command}" for command in commands[:5]]
+    summary = f"Reloaded {len(commands)} commands: {', '.join(names)}"
+    if len(commands) > 5:
+        summary += ", ..."
+    if warnings:
+        summary += "\nWarning: " + "; ".join(warnings)
+    await send_message(bot, chat_id, summary)
+
+
 COMMANDS: dict[str, CmdFn] = {
     ".list": _cmd_list,
     ".new": _cmd_new,
@@ -510,6 +599,7 @@ COMMANDS: dict[str, CmdFn] = {
     ".rename": _cmd_rename,
     ".model": _cmd_model,
     ".otptimeout": _cmd_otptimeout,
+    "/reload": _cmd_reload_commands,
 }
 
 
@@ -611,7 +701,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             return
 
         # Handle /start for existing owner — show terminal list
-        if text.startswith("/start"):
+        if _normalize_command_key(text) == "/start":
             terminals = backend.list()
             await send_message(bot, chat_id,
                 "\U0001f4bb <b>OneCmd</b>\n\n" + _build_list_text(terminals))
@@ -655,7 +745,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
             return
 
         # 4. Dot-commands via COMMANDS dict
-        cmd_key = text.lower().split()[0] if text.strip() else ""
+        cmd_key = _normalize_command_key(text)
         cmd_fn = COMMANDS.get(cmd_key)
         if cmd_fn is not None:
             if cmd_key in _ROUTER_CMDS:

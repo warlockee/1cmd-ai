@@ -7,6 +7,7 @@ Calling spec:
 
 Handlers registered:
   - CommandHandler("start") -> handler_callback (for owner registration)
+  - CommandHandler("reload") -> handler_callback (for slash command reload)
   - MessageHandler(TEXT & ~COMMAND) -> handler_callback
   - CallbackQueryHandler -> handler_callback
 
@@ -71,8 +72,9 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
         .build()
     )
 
-    # /start -> handler_callback (so owner registration + welcome works)
+    # /start and /reload -> handler_callback
     application.add_handler(CommandHandler("start", handler_callback))
+    application.add_handler(CommandHandler("reload", handler_callback))
 
     # Text messages (not commands) -> handler_callback
     application.add_handler(

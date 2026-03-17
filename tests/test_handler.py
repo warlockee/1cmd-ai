@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -56,6 +57,7 @@ def bot():
     b.delete_message = AsyncMock()
     b.answer_callback_query = AsyncMock()
     b.pin_chat_message = AsyncMock()
+    b.set_my_commands = AsyncMock()
     return b
 
 
@@ -280,6 +282,48 @@ class TestHelpCommand:
 
         text_sent = bot.send_message.call_args[1]["text"]
         assert text_sent == HELP_TEXT
+
+
+class TestReloadCommand:
+    def test_reload_sets_base_and_skill_commands(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy.json").write_text(json.dumps({
+            "name": "Deploy-App",
+            "description": "Deploy app",
+            "steps": [],
+        }))
+        (skills_dir / "cleanup.json").write_text(json.dumps({
+            "name": "Cleanup 123",
+            "steps": [],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        bot.set_my_commands.assert_awaited_once()
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skill_deploy_app", "skill_cleanup_123"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Reloaded 4 commands" in text_sent
+        assert "/reload" in text_sent
+
+    def test_reload_warns_when_skills_dir_missing(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        missing_dir = tmp_path / "missing-skills"
+        handler = create_handler(config.model_copy(update={"skills_dir": str(missing_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        bot.set_my_commands.assert_awaited_once()
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Reloaded 2 commands" in text_sent
+        assert "Warning:" in text_sent
 
 
 class TestExitCommand:
