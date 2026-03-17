@@ -166,13 +166,47 @@ class ManagerRouter:
             return
         try:
             from onecmd.manager.agent import Agent
+            from onecmd.manager.tools import TOOL_SCHEMAS, dispatch
 
-            self._agent = Agent(
-                backend=self._backend,
-                config=self._config,
-                notify_fn=self._notify_fn,
-            )
-            logger.info("Manager agent initialized")
+            mode = getattr(self._config, "agent_mode", "legacy")
+            if mode == "skills":
+                from onecmd.manager.skills_runtime import (
+                    skill_tool_registry,
+                    skill_tool_schemas,
+                )
+
+                registry = skill_tool_registry()
+                schemas = skill_tool_schemas()
+
+                def dispatch_skills(tool_name: str, tool_args: dict, ctx: dict) -> str:
+                    fn = registry.get(tool_name)
+                    if fn is None:
+                        return f"Unknown tool: {tool_name}"
+                    try:
+                        local_ctx = dict(ctx)
+                        local_ctx["skill_step_dispatch_fn"] = dispatch
+                        return fn(local_ctx, tool_args)
+                    except Exception as e:
+                        logger.exception("Skills tool error")
+                        return f"[Error in {tool_name}: {e}]"
+
+                self._agent = Agent(
+                    backend=self._backend,
+                    config=self._config,
+                    notify_fn=self._notify_fn,
+                    tool_schemas=schemas,
+                    dispatch_fn=dispatch_skills,
+                )
+                logger.info("Manager agent initialized in skills mode")
+            else:
+                self._agent = Agent(
+                    backend=self._backend,
+                    config=self._config,
+                    notify_fn=self._notify_fn,
+                    tool_schemas=TOOL_SCHEMAS,
+                    dispatch_fn=dispatch,
+                )
+                logger.info("Manager agent initialized in legacy mode")
         except Exception:
             logger.exception("Failed to initialize manager agent")
             self._agent = None

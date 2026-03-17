@@ -171,6 +171,9 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `--dbfile <path>` | Custom database path (default: `./mybot.sqlite`) |
 | `--dangerously-attach-to-any-window` | Show all windows, not just terminals (macOS only) |
 | `--verbose` | Enable debug logging |
+| `--agent-mode <legacy\|skills>` | Choose orchestration mode (default: legacy). `skills` uses only skill tools (`list_skills`, `run_skill`) and does not run legacy SOP+tools together. |
+| `--skills-dir <path>` | Skill JSON directory for skills mode (default: `.onecmd/skills`) |
+| `--skills-max-steps <N>` | Max steps per skill execution (default: 20) |
 
 ### Environment Variables
 
@@ -186,6 +189,8 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `OPENAI_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Refresh endpoint for Codex OAuth tokens |
 | `ONECMD_VISIBLE_LINES` | `40` | Number of terminal lines to include in output |
 | `ONECMD_SPLIT_MESSAGES` | off | Set to `1` to split long output across multiple messages |
+| `ONECMD_AGENT_MODE` | `legacy` | Agent mode switch: `legacy` or `skills` |
+| `ONECMD_SKILLS_DIR` | `.onecmd/skills` | Directory containing `*.json` skill workflows |
 
 Terminal output is sent as a single message by default. Each new command or refresh **deletes the previous output messages** and sends fresh ones, creating a clean "live terminal" view rather than spamming the chat.
 
