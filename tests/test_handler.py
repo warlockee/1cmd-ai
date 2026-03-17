@@ -305,7 +305,7 @@ class TestReloadCommand:
         bot.set_my_commands.assert_awaited_once()
         commands = bot.set_my_commands.await_args.args[0]
         names = [command.command for command in commands]
-        assert names == ["start", "reload", "skill_deploy_app", "skill_cleanup_123"]
+        assert names == ["start", "reload", "skill_cleanup_123", "skill_deploy_app"]
         text_sent = bot.send_message.call_args[1]["text"]
         assert "Reloaded 4 commands" in text_sent
         assert "/reload" in text_sent
