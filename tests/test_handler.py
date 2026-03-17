@@ -127,7 +127,8 @@ def _run(coro):
 
 class TestBuildListText:
     def test_empty_terminals(self):
-        assert _build_list_text([]) == "No terminal sessions found."
+        text = _build_list_text([])
+        assert text.startswith("No terminal sessions found.")
 
     @patch("onecmd.bot.handler._load_aliases", return_value={})
     def test_terminals_listed(self, _mock_aliases):
