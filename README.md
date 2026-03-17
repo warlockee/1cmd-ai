@@ -192,6 +192,12 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `ONECMD_AGENT_MODE` | `legacy` | Agent mode switch: `legacy` or `skills` |
 | `ONECMD_SKILLS_DIR` | `.onecmd/skills` | Directory containing `*.json` skill workflows |
 
+### Bootstrap Skill Workflow
+
+Skills mode can start with only the bootstrap skill at `.onecmd/skills/new-skill`.
+
+Register skills in `.onecmd/skills/skills.json`, then run `/reload` in Telegram to regenerate slash commands from the current registry.
+
 Terminal output is sent as a single message by default. Each new command or refresh **deletes the previous output messages** and sends fresh ones, creating a clean "live terminal" view rather than spamming the chat.
 
 If your terminal produces very long output (e.g. build logs) and you want to see all of it, enable splitting:

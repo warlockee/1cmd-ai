@@ -394,6 +394,33 @@ class TestReloadCommand:
         assert "Reloaded 2 commands" in text_sent
         assert "Warning:" in text_sent
 
+    def test_reload_with_single_bootstrap_skill_registry(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        new_skill_dir = skills_dir / "new-skill"
+        new_skill_dir.mkdir()
+        (new_skill_dir / "SKILL.json").write_text(json.dumps({
+            "name": "new-skill",
+            "description": "Bootstrap a new skill scaffold.",
+            "steps": [],
+        }))
+        (skills_dir / "skills.json").write_text(json.dumps({
+            "version": 1,
+            "skills": [
+                {"name": "new-skill", "enabled": True, "slash": True},
+            ],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skill_new_skill"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Reloaded 3 commands" in text_sent
+
 
 class TestExitCommand:
     def test_dot_exit_when_not_in_mgr(self, bot, store, backend, config):

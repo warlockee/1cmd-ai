@@ -1,0 +1,39 @@
+{
+  "name": "new-skill",
+  "description": "Bootstrap a new skill scaffold with a deterministic doc-first workflow.",
+  "inputs": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "description": "Required skill name in kebab-case."
+    },
+    "description": {
+      "type": "string",
+      "required": false,
+      "description": "Optional one-line summary for the skill."
+    },
+    "template": {
+      "type": "string",
+      "required": false,
+      "default": "doc",
+      "enum": ["doc", "ops", "full"],
+      "description": "Scaffold shape. Current runtime stays doc-first; use README guidance for ops/full extensions."
+    }
+  },
+  "steps": [
+    {
+      "tool": "read_sop",
+      "args": {}
+    },
+    {
+      "tool": "list_skills",
+      "args": {}
+    },
+    {
+      "tool": "send_message_to_user",
+      "args": {
+        "text": "New skill scaffold workflow: 1) confirm a kebab-case name and choose template doc, ops, or full, 2) create .onecmd/skills/<name>/SKILL.json and README.md, 3) keep SKILL.json as a short deterministic SOP using existing manager tools only, 4) add resources only for reusable reference context, 5) add scripts only for repeatable side effects that plain steps cannot express, 6) update .onecmd/skills/skills.json, then run /reload to sync slash commands."
+      }
+    }
+  ]
+}

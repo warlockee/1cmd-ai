@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from onecmd.manager.skills_registry import load_skills_metadata
 
@@ -118,3 +119,24 @@ def test_invalid_registry_entries_warn_without_crashing(tmp_path):
 
     assert [skill["name"] for skill in skills] == ["deploy-check"]
     assert warnings == ["ignored 2 invalid registry entries"]
+
+
+def test_repo_bootstrap_registry_only_enables_new_skill():
+    repo_root = Path(__file__).resolve().parent.parent
+    skills_dir = repo_root / ".onecmd" / "skills"
+
+    skills, warnings = load_skills_metadata(skills_dir)
+
+    assert warnings == []
+    assert [skill["name"] for skill in skills] == ["new-skill"]
+    assert skills[0]["enabled"] is True
+    assert skills[0]["slash"] is True
+
+
+def test_repo_bootstrap_skill_and_design_docs_exist():
+    repo_root = Path(__file__).resolve().parent.parent
+
+    assert (repo_root / ".onecmd" / "skills" / "new-skill" / "SKILL.json").is_file()
+    assert (repo_root / ".onecmd" / "skills" / "new-skill" / "README.md").is_file()
+    assert (repo_root / ".onecmd" / "skills" / "skills.json").is_file()
+    assert (repo_root / "docs" / "SKILLS_DESIGN.md").is_file()
