@@ -35,8 +35,8 @@ from onecmd.auth.totp import STORE_KEY as TOTP_SECRET_KEY
 from onecmd.auth.totp import is_timed_out, totp_verify
 from onecmd.bot.api import answer_callback, delete_message, edit_message, html_escape, pin_message, send_chat_action, send_message
 from onecmd.emoji import parse as emoji_parse
-from onecmd.manager import tools as manager_tools
 from onecmd.manager.router import ManagerRouter
+from onecmd.manager.tools import dispatch as tool_dispatch
 from onecmd.manager.skills_runtime import tool_run_skill
 from onecmd.manager.skills_registry import load_skills_metadata
 from onecmd.manager.tasks import _next_task_id
@@ -286,7 +286,7 @@ def _build_slash_skill_ctx(chat_id: int, config: Config, backend: ValidatedBacke
         "notify": notify_fn,
         "debug": False,
         "llm_client": None,
-        "dispatch_fn": manager_tools.dispatch,
+        "dispatch_fn": tool_dispatch,
         "next_task_id": _next_task_id,
         "skills_enabled": True,
         "skills_dir": getattr(config, "skills_dir", ".onecmd/skills"),
