@@ -340,7 +340,11 @@ async def _cmd_skill_slash(bot, chat_id, text, _s, backend, _store, config, rout
         await send_message(bot, chat_id, f"Skill failed: {html_escape(str(exc))}")
         return
 
-    await send_message(bot, chat_id, result)
+    escaped = html_escape(result)
+    msg_id = await send_message(bot, chat_id, escaped)
+    if msg_id is None:
+        # Fallback for unexpected formatting edge-cases
+        await send_message(bot, chat_id, result, parse_mode=None)
 
 
 async def _update_status(bot, chat_id: int, s: _State, router=None) -> None:
