@@ -8,6 +8,7 @@ Calling spec:
 Handlers registered:
   - CommandHandler("start") -> handler_callback (for owner registration)
   - CommandHandler("reload") -> handler_callback (for slash command reload)
+  - MessageHandler(COMMAND) -> handler_callback (routes dynamic slash commands such as /skills, /skill_*)
   - MessageHandler(TEXT & ~COMMAND) -> handler_callback
   - CallbackQueryHandler -> handler_callback
 
@@ -75,6 +76,10 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
     # /start and /reload -> handler_callback
     application.add_handler(CommandHandler("start", handler_callback))
     application.add_handler(CommandHandler("reload", handler_callback))
+
+    # Slash commands not explicitly registered above (e.g. /skills, /skill_*)
+    # route to the unified handler callback.
+    application.add_handler(MessageHandler(filters.COMMAND, handler_callback))
 
     # Text messages (not commands) -> handler_callback
     application.add_handler(
