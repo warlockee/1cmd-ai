@@ -159,7 +159,7 @@ def _run_new_skill(target: dict[str, Any], ctx: dict[str, Any], inputs: dict[str
     readme_path = result["readme_path"]
     registry_path = result["registry_path"]
     return (
-        f"Created skill {target['name']} scaffold for {name}.\n"
+        f"Created skill scaffold for {name}.\n"
         f"- {skill_json}\n"
         f"- {readme_path}\n"
         f"- {registry_path}\n"
