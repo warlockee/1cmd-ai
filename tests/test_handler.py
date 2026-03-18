@@ -306,9 +306,9 @@ class TestReloadCommand:
         bot.set_my_commands.assert_awaited_once()
         commands = bot.set_my_commands.await_args.args[0]
         names = [command.command for command in commands]
-        assert names == ["start", "reload", "skill_cleanup_123", "skill_deploy_app"]
+        assert names == ["start", "reload", "skills", "skill_cleanup_123", "skill_deploy_app"]
         text_sent = bot.send_message.call_args[1]["text"]
-        assert "Reloaded 4 commands" in text_sent
+        assert "Reloaded 5 commands" in text_sent
         assert "/reload" in text_sent
 
     def test_reload_uses_registry_enabled_slash_and_custom_command(self, tmp_path, bot, store, backend, config):
@@ -347,7 +347,7 @@ class TestReloadCommand:
 
         commands = bot.set_my_commands.await_args.args[0]
         names = [command.command for command in commands]
-        assert names == ["start", "reload", "skill_ship_it"]
+        assert names == ["start", "reload", "skills", "skill_ship_it"]
 
     def test_reload_warns_on_invalid_registry_entries(self, tmp_path, bot, store, backend, config):
         store._data["owner_id"] = "1"
@@ -374,7 +374,7 @@ class TestReloadCommand:
 
         commands = bot.set_my_commands.await_args.args[0]
         names = [command.command for command in commands]
-        assert names == ["start", "reload", "skill_deploy_check"]
+        assert names == ["start", "reload", "skills", "skill_deploy_check"]
         text_sent = bot.send_message.call_args[1]["text"]
         assert "Warning:" in text_sent
         assert "invalid registry entries" in text_sent
@@ -389,9 +389,9 @@ class TestReloadCommand:
         bot.set_my_commands.assert_awaited_once()
         commands = bot.set_my_commands.await_args.args[0]
         names = [command.command for command in commands]
-        assert names == ["start", "reload"]
+        assert names == ["start", "reload", "skills"]
         text_sent = bot.send_message.call_args[1]["text"]
-        assert "Reloaded 2 commands" in text_sent
+        assert "Reloaded 3 commands" in text_sent
         assert "Warning:" in text_sent
 
     def test_reload_with_single_bootstrap_skill_registry(self, tmp_path, bot, store, backend, config):
@@ -417,9 +417,73 @@ class TestReloadCommand:
 
         commands = bot.set_my_commands.await_args.args[0]
         names = [command.command for command in commands]
-        assert names == ["start", "reload", "skill_new_skill"]
+        assert names == ["start", "reload", "skills", "skill_new_skill"]
         text_sent = bot.send_message.call_args[1]["text"]
-        assert "Reloaded 3 commands" in text_sent
+        assert "Reloaded 4 commands" in text_sent
+
+
+class TestSkillSlashCommands:
+    @patch("onecmd.bot.handler.tool_run_skill")
+    def test_skill_slash_triggers_runtime_call(self, mock_run_skill, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        mock_run_skill.return_value = "skill result"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy-check.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        handler = create_handler(
+            config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"}),
+            store,
+            backend,
+        )
+
+        _run(handler(_make_update("/skill_deploy_check ship it", user_id=1), _make_context(bot)))
+
+        mock_run_skill.assert_called_once()
+        args = mock_run_skill.call_args.args[1]
+        assert args["skill_name"] == "deploy-check"
+        assert args["inputs"] == {"request": "ship it"}
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert text_sent == "skill result"
+
+    def test_unknown_skill_slash_gives_helpful_message(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        handler = create_handler(
+            config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"}),
+            store,
+            backend,
+        )
+
+        _run(handler(_make_update("/skill_missing do work", user_id=1), _make_context(bot)))
+
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Unknown skill command" in text_sent
+        assert "/reload" in text_sent
+
+    @patch("onecmd.bot.handler.tool_run_skill")
+    def test_skill_slash_parses_json_input(self, mock_run_skill, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        mock_run_skill.return_value = "json result"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy-check.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        handler = create_handler(
+            config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"}),
+            store,
+            backend,
+        )
+
+        _run(handler(_make_update('/skill_deploy_check {"env":"prod","force":true}', user_id=1), _make_context(bot)))
+
+        args = mock_run_skill.call_args.args[1]
+        assert args["inputs"] == {"env": "prod", "force": True}
 
 
 class TestExitCommand:

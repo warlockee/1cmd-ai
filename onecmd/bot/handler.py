@@ -35,14 +35,18 @@ from onecmd.auth.totp import STORE_KEY as TOTP_SECRET_KEY
 from onecmd.auth.totp import is_timed_out, totp_verify
 from onecmd.bot.api import answer_callback, delete_message, edit_message, html_escape, pin_message, send_chat_action, send_message
 from onecmd.emoji import parse as emoji_parse
+from onecmd.manager import tools as manager_tools
 from onecmd.manager.router import ManagerRouter
+from onecmd.manager.skills_runtime import tool_run_skill
 from onecmd.manager.skills_registry import load_skills_metadata
+from onecmd.manager.tasks import _next_task_id
 from onecmd.texts import HELP_TEXT, build_welcome_message
 from onecmd.terminal.display import (
     TrackedMessages,
     delete_tracked_messages,
     send_terminal_display,
 )
+from onecmd.manager.queue import TerminalQueue
 
 if TYPE_CHECKING:
     from telegram import Bot
@@ -189,11 +193,31 @@ def _build_telegram_commands(config: Config) -> tuple[list[BotCommand], list[str
     commands = [
         BotCommand("start", "Show terminals"),
         BotCommand("reload", "Reload bot commands"),
+        BotCommand("skills", "List available skills"),
     ]
     seen = {cmd.command for cmd in commands}
-    skills, warnings = load_skills_metadata(config.skills_dir)
+    skill_commands, warnings = _load_skill_command_metadata(config)
 
     duplicate_count = 0
+    for skill_command in skill_commands:
+        command_name = skill_command["command_name"]
+        if command_name in seen:
+            duplicate_count += 1
+            continue
+        desc = skill_command["description"]
+        if not isinstance(desc, str) or not desc.strip():
+            desc = f"Run skill {skill_command['skill_name']}"
+        commands.append(BotCommand(command_name, desc.strip()[:256]))
+        seen.add(command_name)
+
+    if duplicate_count:
+        warnings.append(f"ignored {duplicate_count} duplicate skill command(s)")
+    return commands, warnings
+
+
+def _load_skill_command_metadata(config: Config) -> tuple[list[dict[str, str]], list[str]]:
+    skills, warnings = load_skills_metadata(config.skills_dir)
+    command_entries: list[dict[str, str]] = []
     for skill in skills:
         if not skill.get("enabled", True) or not skill.get("slash", True):
             continue
@@ -203,18 +227,111 @@ def _build_telegram_commands(config: Config) -> tuple[list[BotCommand], list[str
         if not command_name:
             warnings.append(f"ignored invalid skill command for {name}")
             continue
-        if command_name in seen:
-            duplicate_count += 1
-            continue
-        desc = skill.get("description")
-        if not isinstance(desc, str) or not desc.strip():
-            desc = f"Run skill {name.strip()}"
-        commands.append(BotCommand(command_name, desc.strip()[:256]))
-        seen.add(command_name)
+        command_entries.append({
+            "command_name": command_name,
+            "skill_name": name,
+            "description": str(skill.get("description") or "").strip(),
+        })
+    return command_entries, warnings
 
-    if duplicate_count:
-        warnings.append(f"ignored {duplicate_count} duplicate skill command(s)")
-    return commands, warnings
+
+def _extract_command_and_args(text: str) -> tuple[str, str]:
+    stripped = text.strip()
+    if not stripped:
+        return "", ""
+    parts = stripped.split(None, 1)
+    return parts[0], parts[1].strip() if len(parts) > 1 else ""
+
+
+def _parse_skill_inputs(text: str) -> dict[str, object]:
+    payload = text.strip()
+    if not payload:
+        return {}
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(payload):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(payload[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {"request": payload}
+
+
+def _find_skill_command(config: Config, command_name: str) -> tuple[dict[str, str] | None, list[str]]:
+    skill_commands, warnings = _load_skill_command_metadata(config)
+    for entry in skill_commands:
+        if entry["command_name"] == command_name:
+            return entry, warnings
+    return None, warnings
+
+
+def _build_slash_skill_ctx(chat_id: int, config: Config, backend: ValidatedBackend, router: ManagerRouter, notify_fn) -> dict[str, object]:
+    if getattr(config, "agent_mode", "legacy") == "skills" and config.has_llm_key:
+        if getattr(router, "_agent", None) is None:
+            router._init_agent()
+        agent = getattr(router, "_agent", None)
+        if agent is not None:
+            return agent._build_tool_ctx(chat_id)
+
+    return {
+        "backend": backend,
+        "queue_cls": TerminalQueue,
+        "tasks": {},
+        "tasks_lock": threading.Lock(),
+        "chat_id": chat_id,
+        "notify": notify_fn,
+        "debug": False,
+        "llm_client": None,
+        "dispatch_fn": manager_tools.dispatch,
+        "next_task_id": _next_task_id,
+        "skills_enabled": True,
+        "skills_dir": getattr(config, "skills_dir", ".onecmd/skills"),
+        "skills_max_steps": getattr(config, "skills_max_steps", 20),
+    }
+
+
+async def _cmd_skills(bot, chat_id, _text, _s, _backend, _store, config, router=None):
+    skill_commands, warnings = _load_skill_command_metadata(config)
+    if not skill_commands:
+        message = "No slash skills available."
+        if warnings:
+            message += "\nWarning: " + "; ".join(warnings)
+        await send_message(bot, chat_id, message)
+        return
+
+    lines = [f"Skills ({len(skill_commands)}):"]
+    for entry in skill_commands:
+        description = html_escape(entry["description"]) if entry["description"] else "No description"
+        lines.append(
+            f"/{entry['command_name']} -> <code>{html_escape(entry['skill_name'])}</code>: {description}"
+        )
+    if warnings:
+        lines.append("Warning: " + "; ".join(html_escape(item) for item in warnings))
+    await send_message(bot, chat_id, "\n".join(lines))
+
+
+async def _cmd_skill_slash(bot, chat_id, text, _s, backend, _store, config, router=None, notify_fn=None):
+    command_token, trailing_text = _extract_command_and_args(text)
+    command_name = _normalize_command_key(command_token).lstrip("/")
+    skill_entry, _warnings = _find_skill_command(config, command_name)
+    if skill_entry is None:
+        await send_message(
+            bot,
+            chat_id,
+            f"Unknown skill command: /{html_escape(command_name)}\nRun /reload to refresh slash commands.",
+        )
+        return
+
+    ctx = _build_slash_skill_ctx(chat_id, config, backend, router, notify_fn)
+    result = tool_run_skill(ctx, {
+        "skill_name": skill_entry["skill_name"],
+        "inputs": _parse_skill_inputs(trailing_text),
+    })
+    await send_message(bot, chat_id, result)
 
 
 async def _update_status(bot, chat_id: int, s: _State, router=None) -> None:
@@ -583,6 +700,7 @@ COMMANDS: dict[str, CmdFn] = {
     ".model": _cmd_model,
     ".otptimeout": _cmd_otptimeout,
     "/reload": _cmd_reload_commands,
+    "/skills": _cmd_skills,
 }
 
 
@@ -729,9 +847,25 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
 
         # 4. Dot-commands via COMMANDS dict
         cmd_key = _normalize_command_key(text)
+        if cmd_key.startswith(f"/{_SKILL_COMMAND_PREFIX}"):
+            await _cmd_skill_slash(
+                bot,
+                chat_id,
+                text,
+                s,
+                backend,
+                store,
+                config,
+                router=router,
+                notify_fn=_notify_sync,
+            )
+            return
+
         cmd_fn = COMMANDS.get(cmd_key)
         if cmd_fn is not None:
             if cmd_key in _ROUTER_CMDS:
+                await cmd_fn(bot, chat_id, text, s, backend, store, config, router=router)
+            elif cmd_key == "/skills":
                 await cmd_fn(bot, chat_id, text, s, backend, store, config, router=router)
             else:
                 await cmd_fn(bot, chat_id, text, s, backend, store, config)
