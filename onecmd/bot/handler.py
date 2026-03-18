@@ -317,6 +317,7 @@ async def _cmd_skills(bot, chat_id, _text, _s, _backend, _store, config, router=
 async def _cmd_skill_slash(bot, chat_id, text, _s, backend, _store, config, router=None, notify_fn=None):
     command_token, trailing_text = _extract_command_and_args(text)
     command_name = _normalize_command_key(command_token).lstrip("/")
+    logger.info("slash-skill received: chat_id=%s command=%s raw_args=%s", chat_id, command_name, trailing_text)
     skill_entry, _warnings = _find_skill_command(config, command_name)
     if skill_entry is None:
         await send_message(
@@ -326,10 +327,19 @@ async def _cmd_skill_slash(bot, chat_id, text, _s, backend, _store, config, rout
         )
         return
 
+    inputs = _parse_skill_inputs(trailing_text)
+    logger.info(
+        "slash-skill mapped: chat_id=%s command=%s skill=%s inputs=%s",
+        chat_id,
+        command_name,
+        skill_entry["skill_name"],
+        inputs,
+    )
+
     ctx = _build_slash_skill_ctx(chat_id, config, backend, router, notify_fn)
     args = {
         "skill_name": skill_entry["skill_name"],
-        "inputs": _parse_skill_inputs(trailing_text),
+        "inputs": inputs,
     }
 
     try:
@@ -861,6 +871,7 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
         # 4. Dot-commands via COMMANDS dict
         cmd_key = _normalize_command_key(text)
         if cmd_key.startswith(f"/{_SKILL_COMMAND_PREFIX}"):
+            logger.info("dispatching dynamic slash command: chat_id=%s cmd=%s", chat_id, cmd_key)
             await _cmd_skill_slash(
                 bot,
                 chat_id,
