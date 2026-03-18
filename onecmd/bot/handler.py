@@ -327,10 +327,19 @@ async def _cmd_skill_slash(bot, chat_id, text, _s, backend, _store, config, rout
         return
 
     ctx = _build_slash_skill_ctx(chat_id, config, backend, router, notify_fn)
-    result = tool_run_skill(ctx, {
+    args = {
         "skill_name": skill_entry["skill_name"],
         "inputs": _parse_skill_inputs(trailing_text),
-    })
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, tool_run_skill, ctx, args)
+    except Exception as exc:
+        logger.exception("skill slash command failed: %s", command_name)
+        await send_message(bot, chat_id, f"Skill failed: {html_escape(str(exc))}")
+        return
+
     await send_message(bot, chat_id, result)
 
 
