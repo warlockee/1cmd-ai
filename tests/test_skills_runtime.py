@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from onecmd.manager.skills_registry import load_skills_metadata
 from onecmd.manager.skills_runtime import tool_run_skill
@@ -155,3 +156,165 @@ def test_stop_and_report_stops_on_first_tool_failure(tmp_path):
 
     assert round_calls["count"] == 1
     assert "Skill stopped: deploy hit a tool failure during restart_service" in result
+
+
+def _write_new_skill_runtime_fixture(skills_dir: Path) -> None:
+    skill_dir = skills_dir / "new-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.json").write_text(json.dumps({
+        "name": "new-skill",
+        "description": "Bootstrap a new skill scaffold.",
+        "steps": [],
+    }))
+    (skills_dir / "skills.json").write_text(json.dumps({
+        "version": 1,
+        "skills": [
+            {"name": "new-skill", "enabled": True, "slash": True},
+        ],
+    }))
+
+
+def test_new_skill_creates_scaffold_and_updates_registry(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    _write_new_skill_runtime_fixture(skills_dir)
+
+    result = tool_run_skill({
+        "skills_enabled": True,
+        "skills_dir": str(skills_dir),
+        "skills_max_steps": 20,
+        "dispatch_fn": lambda _tool, _args, _ctx: "unused",
+    }, {
+        "skill_name": "new-skill",
+        "inputs": {
+            "name": "deploy-check",
+            "description": "Validate production before release.",
+            "template": "ops",
+        },
+    })
+
+    created_dir = skills_dir / "deploy-check"
+    skill_json = json.loads((created_dir / "SKILL.json").read_text())
+    registry = json.loads((skills_dir / "skills.json").read_text())
+
+    assert skill_json["name"] == "deploy-check"
+    assert skill_json["description"] == "Validate production before release."
+    assert (created_dir / "README.md").is_file()
+    assert registry["skills"][-1] == {
+        "name": "deploy-check",
+        "enabled": True,
+        "slash": True,
+        "description": "Validate production before release.",
+        "command": "deploy_check",
+    }
+    assert "deploy-check/SKILL.json" in result
+    assert "Run /reload" in result
+
+
+def test_new_skill_duplicate_requires_explicit_overwrite(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    _write_new_skill_runtime_fixture(skills_dir)
+    existing_dir = skills_dir / "deploy-check"
+    existing_dir.mkdir()
+    (existing_dir / "SKILL.json").write_text(json.dumps({
+        "name": "deploy-check",
+        "description": "Old description",
+        "steps": [],
+    }))
+    (existing_dir / "README.md").write_text("# deploy-check\n")
+
+    result = tool_run_skill({
+        "skills_enabled": True,
+        "skills_dir": str(skills_dir),
+        "skills_max_steps": 20,
+        "dispatch_fn": lambda _tool, _args, _ctx: "unused",
+    }, {
+        "skill_name": "new-skill",
+        "inputs": {"name": "deploy-check"},
+    })
+
+    assert result == "Skill already exists: deploy-check. Re-run with overwrite=true to replace SKILL.json and README.md."
+
+
+def test_new_skill_updates_existing_registry_entry_without_duplicates(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    _write_new_skill_runtime_fixture(skills_dir)
+    skill_dir = skills_dir / "deploy-check"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.json").write_text(json.dumps({
+        "name": "deploy-check",
+        "description": "Old description",
+        "steps": [],
+    }))
+    (skill_dir / "README.md").write_text("# deploy-check\n")
+    (skills_dir / "skills.json").write_text(json.dumps({
+        "version": 1,
+        "skills": [
+            {"name": "new-skill", "enabled": True, "slash": True},
+            {"name": "deploy-check", "enabled": False},
+            {"name": "deploy-check", "enabled": True, "slash": False},
+        ],
+    }))
+
+    result = tool_run_skill({
+        "skills_enabled": True,
+        "skills_dir": str(skills_dir),
+        "skills_max_steps": 20,
+        "dispatch_fn": lambda _tool, _args, _ctx: "unused",
+    }, {
+        "skill_name": "new-skill",
+        "inputs": {
+            "name": "deploy-check",
+            "description": "Validate deploys",
+            "overwrite": True,
+        },
+    })
+
+    registry = json.loads((skills_dir / "skills.json").read_text())
+    deploy_entries = [entry for entry in registry["skills"] if entry.get("name") == "deploy-check"]
+
+    assert len(deploy_entries) == 1
+    assert deploy_entries[0]["enabled"] is True
+    assert deploy_entries[0]["slash"] is True
+    assert deploy_entries[0]["command"] == "deploy_check"
+    assert deploy_entries[0]["description"] == "Validate deploys"
+    assert "Run /reload" in result
+
+
+def test_new_skill_missing_name_returns_clear_error(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    _write_new_skill_runtime_fixture(skills_dir)
+
+    result = tool_run_skill({
+        "skills_enabled": True,
+        "skills_dir": str(skills_dir),
+        "skills_max_steps": 20,
+        "dispatch_fn": lambda _tool, _args, _ctx: "unused",
+    }, {
+        "skill_name": "new-skill",
+        "inputs": {"request": "please create a skill for deployments"},
+    })
+
+    assert result.startswith("Missing skill name.")
+
+
+def test_new_skill_extracts_name_from_plain_text_request(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    _write_new_skill_runtime_fixture(skills_dir)
+
+    result = tool_run_skill({
+        "skills_enabled": True,
+        "skills_dir": str(skills_dir),
+        "skills_max_steps": 20,
+        "dispatch_fn": lambda _tool, _args, _ctx: "unused",
+    }, {
+        "skill_name": "new-skill",
+        "inputs": {"request": "Create deploy-check for release validation"},
+    })
+
+    assert (skills_dir / "deploy-check" / "SKILL.json").is_file()
+    assert "Run /reload" in result

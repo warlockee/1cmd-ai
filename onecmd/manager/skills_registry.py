@@ -7,8 +7,10 @@ from typing import Any
 
 
 _HEADING_RE = re.compile(r"^\s*#\s+(.*\S)\s*$")
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 _VALID_MODES = {"domain", "capability"}
 _VALID_FAILURE_POLICIES = {"stop_and_report", "fallback"}
+_VALID_TEMPLATES = {"doc", "ops", "full"}
 
 
 def _is_structured_section(items: Any) -> bool:
@@ -151,6 +153,153 @@ def _resolve_registered_skill_path(skills_dir: Path, name: str) -> Path | None:
     if file_path.is_file():
         return file_path
     return None
+
+
+def _sanitize_registry_command_name(name: str) -> str:
+    sanitized = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")
+    return re.sub(r"_+", "_", sanitized)
+
+
+def _skill_scaffold_json(name: str, description: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description or f"Describe what {name} does.",
+        "mode": "domain",
+        "max_rounds": 3,
+        "failure_policy": "stop_and_report",
+        "resources": [],
+        "scripts": [],
+        "steps": [],
+    }
+
+
+def _skill_scaffold_readme(name: str, description: str, template: str) -> str:
+    summary = description or f"Describe the purpose and safe operating bounds for `{name}`."
+    template_line = {
+        "doc": "This scaffold is doc-first. Add resources before adding executable helpers.",
+        "ops": "This scaffold is ops-oriented. Document side effects and approval requirements before adding scripts.",
+        "full": "This scaffold is full-mode. Keep resources, scripts, and approval boundaries explicit and reviewable.",
+    }[template]
+    return "\n".join([
+        f"# {name}",
+        "",
+        summary,
+        "",
+        f"Template: `{template}`",
+        template_line,
+        "",
+        "## Notes",
+        "",
+        "- Keep the skill bounded and explicit.",
+        "- Document risky actions and required confirmations here.",
+        "- Run `/reload` after editing the skill registry or slash settings.",
+        "",
+    ])
+
+
+def register_skill_metadata(
+    skills_dir: str | Path,
+    name: str,
+    description: str = "",
+    *,
+    enabled: bool = True,
+    slash: bool = True,
+    command: str | None = None,
+) -> dict[str, Any]:
+    root = Path(skills_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    registry_path = root / "skills.json"
+
+    if registry_path.exists():
+        try:
+            registry = json.loads(registry_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid registry file: {registry_path}") from exc
+        if not isinstance(registry, dict):
+            raise ValueError(f"invalid registry file: {registry_path}")
+    else:
+        registry = {"version": 1, "skills": []}
+
+    skills = registry.get("skills")
+    if not isinstance(skills, list):
+        raise ValueError("invalid registry: skills must be a list")
+
+    normalized_name = name.strip()
+    generated_command = _sanitize_registry_command_name(command or normalized_name)
+    if not generated_command:
+        generated_command = _sanitize_registry_command_name(normalized_name)
+
+    kept_entries: list[dict[str, Any]] = []
+    updated_entry: dict[str, Any] | None = None
+    for entry in skills:
+        if not isinstance(entry, dict):
+            kept_entries.append(entry)
+            continue
+        entry_name = entry.get("name")
+        if not isinstance(entry_name, str) or entry_name.strip() != normalized_name:
+            kept_entries.append(entry)
+            continue
+        if updated_entry is None:
+            updated_entry = dict(entry)
+        # Drop duplicate entries after keeping the first match.
+
+    if updated_entry is None:
+        updated_entry = {"name": normalized_name}
+
+    updated_entry["enabled"] = enabled
+    updated_entry["slash"] = slash
+    if description.strip():
+        updated_entry["description"] = description.strip()
+    elif not isinstance(updated_entry.get("description"), str) or not str(updated_entry.get("description")).strip():
+        updated_entry.pop("description", None)
+    if not isinstance(updated_entry.get("command"), str) or not str(updated_entry.get("command")).strip():
+        updated_entry["command"] = generated_command
+
+    kept_entries.append(updated_entry)
+    registry["version"] = 1
+    registry["skills"] = kept_entries
+    registry_path.write_text(json.dumps(registry, indent=2) + "\n")
+    return updated_entry
+
+
+def create_skill_scaffold(
+    skills_dir: str | Path,
+    name: str,
+    description: str = "",
+    template: str = "doc",
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    normalized_name = name.strip().lower()
+    if not normalized_name:
+        raise ValueError("missing skill name")
+    if not _SKILL_NAME_RE.match(normalized_name):
+        raise ValueError("invalid skill name: use lowercase letters, numbers, hyphens, or underscores")
+
+    normalized_template = template.strip().lower() if isinstance(template, str) else "doc"
+    if normalized_template not in _VALID_TEMPLATES:
+        raise ValueError(f"invalid template: {template}")
+
+    root = Path(skills_dir)
+    skill_dir = root / normalized_name
+    skill_json_path = skill_dir / "SKILL.json"
+    readme_path = skill_dir / "README.md"
+
+    if skill_dir.exists() and not overwrite:
+        raise FileExistsError(f"skill already exists: {skill_dir}")
+
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_json_path.write_text(json.dumps(_skill_scaffold_json(normalized_name, description.strip()), indent=2) + "\n")
+    readme_path.write_text(_skill_scaffold_readme(normalized_name, description.strip(), normalized_template))
+    registry_entry = register_skill_metadata(root, normalized_name, description.strip())
+
+    return {
+        "skill_dir": skill_dir,
+        "skill_json_path": skill_json_path,
+        "readme_path": readme_path,
+        "registry_path": root / "skills.json",
+        "registry_entry": registry_entry,
+    }
 
 
 def load_skills_metadata(skills_dir: str | Path) -> tuple[list[dict[str, Any]], list[str]]:

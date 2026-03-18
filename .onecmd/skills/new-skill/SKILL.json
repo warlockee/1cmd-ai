@@ -25,20 +25,5 @@
       "description": "Scaffold shape. Current runtime stays doc-first; use README guidance for deterministic ops/full extensions only when explicitly needed."
     }
   },
-  "steps": [
-    {
-      "tool": "read_sop",
-      "args": {}
-    },
-    {
-      "tool": "list_skills",
-      "args": {}
-    },
-    {
-      "tool": "send_message_to_user",
-      "args": {
-        "text": "New skill scaffold rules: 1) confirm explicit inputs first: required kebab-case name, optional description, and template doc, ops, or full, 2) create .onecmd/skills/<name>/SKILL.json and README.md, 3) emit mode, max_rounds, optional max_steps, failure_policy, and empty resources/scripts stubs in SKILL.json, 4) keep steps linear and deterministic when you use them so legacy execution still works, 5) add a resource only for stable reusable reference context the model may need to read, 6) add a script only for repeatable deterministic side effects or validation that plain steps cannot safely express, 7) any risky, state-changing, or destructive action must rely on existing confirmation or guardrail tools and must document the approval requirement in README.md, 8) never generate raw dangerous command patterns in skill steps, especially direct send_command payloads like rm -rf, git push --force, git reset --hard, shutdown, reboot, DROP TABLE, or DELETE FROM, 9) update .onecmd/skills/skills.json, then run /reload to sync slash commands."
-      }
-    }
-  ]
+  "steps": []
 }

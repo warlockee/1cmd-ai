@@ -5,11 +5,18 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from onecmd.manager.skills_registry import load_skills_metadata
+from onecmd.manager.skills_registry import create_skill_scaffold, load_skills_metadata
 from onecmd.manager.tools import TOOL_SCHEMAS
 
 
 _VAR_RE = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*)$")
+_NEW_SKILL_NAME_PATTERNS = [
+    re.compile(r"\bname\s*[:=]\s*['\"]?([a-z0-9]+(?:[-_][a-z0-9]+)*)['\"]?", re.IGNORECASE),
+    re.compile(r"`([a-z0-9]+(?:[-_][a-z0-9]+)*)`"),
+    re.compile(r"'([a-z0-9]+(?:[-_][a-z0-9]+)*)'"),
+    re.compile(r"\"([a-z0-9]+(?:[-_][a-z0-9]+)*)\""),
+    re.compile(r"\b([a-z0-9]+(?:-[a-z0-9]+)+)\b"),
+]
 
 
 def _skills_dir(ctx: dict[str, Any]) -> Path:
@@ -88,6 +95,76 @@ def _resolve_vars(obj: Any, inputs: dict[str, Any]) -> Any:
     if isinstance(obj, dict):
         return {k: _resolve_vars(v, inputs) for k, v in obj.items()}
     return obj
+
+
+def _coerce_new_skill_request(inputs: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(inputs)
+    request = payload.get("request")
+    if isinstance(request, str):
+        request = request.strip()
+        if request.startswith("{"):
+            try:
+                parsed = json.loads(request)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                payload.update(parsed)
+                request = str(parsed.get("request") or "").strip()
+        if not payload.get("name") and request:
+            for pattern in _NEW_SKILL_NAME_PATTERNS:
+                match = pattern.search(request)
+                if match:
+                    payload["name"] = match.group(1).lower()
+                    break
+        if not payload.get("template") and request:
+            template_match = re.search(r"\b(doc|ops|full)\b", request, re.IGNORECASE)
+            if template_match:
+                payload["template"] = template_match.group(1).lower()
+        if not payload.get("description") and request:
+            name = str(payload.get("name") or "").strip()
+            if name:
+                description = re.sub(rf"\b{re.escape(name)}\b", "", request, count=1, flags=re.IGNORECASE).strip(" :,-")
+                if description:
+                    payload["description"] = description
+    return payload
+
+
+def _run_new_skill(target: dict[str, Any], ctx: dict[str, Any], inputs: dict[str, Any]) -> str:
+    payload = _coerce_new_skill_request(inputs)
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        return (
+            'Missing skill name. Use JSON like {"name":"deploy-check","description":"Validate deploys","template":"doc"} '
+            'or plain text like "deploy-check".'
+        )
+
+    description = payload.get("description")
+    template = payload.get("template") or "doc"
+    overwrite = bool(payload.get("overwrite", False))
+
+    try:
+        result = create_skill_scaffold(
+            _skills_dir(ctx),
+            name,
+            description if isinstance(description, str) else "",
+            template if isinstance(template, str) else "doc",
+            overwrite=overwrite,
+        )
+    except FileExistsError:
+        return f"Skill already exists: {name}. Re-run with overwrite=true to replace SKILL.json and README.md."
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    skill_json = result["skill_json_path"]
+    readme_path = result["readme_path"]
+    registry_path = result["registry_path"]
+    return (
+        f"Created skill {target['name']} scaffold for {name}.\n"
+        f"- {skill_json}\n"
+        f"- {readme_path}\n"
+        f"- {registry_path}\n"
+        "Run /reload to refresh slash commands."
+    )
 
 
 def tool_list_skills(ctx: dict[str, Any], args: dict[str, Any]) -> str:
@@ -283,6 +360,9 @@ def tool_run_skill(ctx: dict[str, Any], args: dict[str, Any]) -> str:
             break
     if not target:
         return f"Skill not found: {skill_name}"
+
+    if target.get("name") == "new-skill":
+        return _run_new_skill(target, ctx, inputs if isinstance(inputs, dict) else {})
 
     max_steps = _policy_max_steps(target, ctx)
     steps = target.get("steps", [])
