@@ -49,6 +49,9 @@ class Config(BaseModel, extra="forbid"):
     admin_password: str | None = Field(default=None, description="Admin panel password")
     slack_bot_token: str | None = Field(default=None, description="Slack Bot User OAuth Token")
     slack_app_token: str | None = Field(default=None, description="Slack App-Level Token for Socket Mode")
+    agent_mode: str = Field(default="legacy", description="Agent mode: legacy|skills")
+    skills_dir: str = Field(default=".onecmd/skills", description="Directory containing skill JSON files")
+    skills_max_steps: int = Field(default=20, ge=1, le=200, description="Max steps per skill")
 
     @property
     def has_llm_key(self) -> bool:
@@ -89,6 +92,8 @@ class Config(BaseModel, extra="forbid"):
             raise ValueError("anthropic_api_key must be non-empty if provided")
         if self.google_api_key is not None and len(self.google_api_key) == 0:
             raise ValueError("google_api_key must be non-empty if provided")
+        if self.agent_mode not in {"legacy", "skills"}:
+            raise ValueError("agent_mode must be one of: legacy, skills")
         return self
 
 
@@ -133,6 +138,9 @@ def parse_config(argv: list[str] | None = None) -> Config:
     enable_otp: bool = False
     verbose: bool = False
     admin_port: int | None = None
+    agent_mode: str = os.environ.get("ONECMD_AGENT_MODE", "legacy").strip().lower() or "legacy"
+    skills_dir: str = os.environ.get("ONECMD_SKILLS_DIR", ".onecmd/skills")
+    skills_max_steps: int = 20
 
     i = 1  # skip argv[0]
     while i < len(argv):
@@ -155,6 +163,18 @@ def parse_config(argv: list[str] | None = None) -> Config:
             i += 1
             try:
                 admin_port = int(argv[i])
+            except ValueError:
+                pass
+        elif arg == "--agent-mode" and i + 1 < len(argv):
+            i += 1
+            agent_mode = argv[i].strip().lower()
+        elif arg == "--skills-dir" and i + 1 < len(argv):
+            i += 1
+            skills_dir = argv[i]
+        elif arg == "--skills-max-steps" and i + 1 < len(argv):
+            i += 1
+            try:
+                skills_max_steps = int(argv[i])
             except ValueError:
                 pass
         i += 1
@@ -206,4 +226,7 @@ def parse_config(argv: list[str] | None = None) -> Config:
         admin_password=admin_password,
         slack_bot_token=slack_bot_token,
         slack_app_token=slack_app_token,
+        agent_mode=agent_mode,
+        skills_dir=skills_dir,
+        skills_max_steps=skills_max_steps,
     )

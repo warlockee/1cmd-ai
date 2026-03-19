@@ -22,7 +22,7 @@ def _clean_activity():
 def _make_ctx(capture_output="$ "):
     """Minimal ctx for dispatch."""
     backend = MagicMock()
-    backend.list.return_value = []
+    backend.list.return_value = [_make_terminal("%0")]
     backend.capture.return_value = capture_output
     backend.send_keys.return_value = True
     return {
@@ -143,6 +143,74 @@ class TestUnhookedTools:
         ctx = _make_ctx()
         result = tools.dispatch("nonexistent_tool", {}, ctx)
         assert "Unknown tool" in result
+
+
+# ---------------------------------------------------------------------------
+# Terminal selector resolution
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalSelectorResolution:
+    def test_dot_selector_is_1_based(self):
+        ctx = _make_ctx(capture_output="$ first")
+        ctx["backend"].list.return_value = [
+            _make_terminal("%0", "bash"),
+            _make_terminal("119", "zsh"),
+        ]
+
+        result = tools.dispatch("read_terminal", {"terminal_id": ".1"}, ctx)
+
+        ctx["backend"].capture.assert_called_with("%0")
+        assert "first" in result
+
+    def test_numeric_selector_is_1_based(self):
+        ctx = _make_ctx(capture_output="$ second")
+        ctx["backend"].list.return_value = [
+            _make_terminal("%0", "bash"),
+            _make_terminal("119", "zsh"),
+        ]
+
+        result = tools.dispatch("read_terminal", {"terminal_id": "2"}, ctx)
+
+        ctx["backend"].capture.assert_called_with("119")
+        assert "second" in result
+
+    def test_exact_backend_id_still_wins(self):
+        ctx = _make_ctx(capture_output="$ exact")
+        ctx["backend"].list.return_value = [
+            _make_terminal("%0", "bash"),
+            _make_terminal("119", "zsh"),
+        ]
+
+        result = tools.dispatch("read_terminal", {"terminal_id": "119"}, ctx)
+
+        ctx["backend"].capture.assert_called_with("119")
+        assert "exact" in result
+
+    def test_alias_still_resolves(self):
+        ctx = _make_ctx(capture_output="$ alias")
+        ctx["backend"].list.return_value = [
+            _make_terminal("%0", "bash"),
+            _make_terminal("119", "zsh"),
+        ]
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(tools, "_read_aliases", lambda: {"119": "main"})
+            result = tools.dispatch("read_terminal", {"terminal_id": "main"}, ctx)
+
+        ctx["backend"].capture.assert_called_with("119")
+        assert "alias" in result
+
+    def test_zero_based_selector_no_longer_resolves(self):
+        ctx = _make_ctx()
+        ctx["backend"].list.return_value = [
+            _make_terminal("%0", "bash"),
+            _make_terminal("119", "zsh"),
+        ]
+
+        result = tools.dispatch("read_terminal", {"terminal_id": ".0"}, ctx)
+
+        assert result == "Unknown terminal ID: .0"
 
 
 # ---------------------------------------------------------------------------

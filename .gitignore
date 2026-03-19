@@ -16,7 +16,12 @@ apikey.txt
 .env
 
 # Runtime
-.onecmd/
+.onecmd/*
+!.onecmd/skills/
+!.onecmd/skills/skills.json
+!.onecmd/skills/new-skill/
+!.onecmd/skills/new-skill/SKILL.json
+!.onecmd/skills/new-skill/README.md
 .omc/
 .onecmd.pid
 run.sh

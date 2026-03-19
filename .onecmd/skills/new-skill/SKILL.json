@@ -1,0 +1,29 @@
+{
+  "name": "new-skill",
+  "description": "Bootstrap a new skill scaffold with deterministic, bounded, explicit-input authoring rules.",
+  "mode": "domain",
+  "max_rounds": 3,
+  "failure_policy": "stop_and_report",
+  "resources": [],
+  "scripts": [],
+  "inputs": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "description": "Required explicit skill name in kebab-case; do not infer or invent it."
+    },
+    "description": {
+      "type": "string",
+      "required": false,
+      "description": "Optional one-line summary for the skill; keep it concrete and implementation-neutral."
+    },
+    "template": {
+      "type": "string",
+      "required": false,
+      "default": "doc",
+      "enum": ["doc", "ops", "full"],
+      "description": "Scaffold shape. Current runtime stays doc-first; use README guidance for deterministic ops/full extensions only when explicitly needed."
+    }
+  },
+  "steps": []
+}

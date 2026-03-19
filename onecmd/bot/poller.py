@@ -7,6 +7,8 @@ Calling spec:
 
 Handlers registered:
   - CommandHandler("start") -> handler_callback (for owner registration)
+  - CommandHandler("reload") -> handler_callback (for slash command reload)
+  - MessageHandler(COMMAND) -> handler_callback (routes dynamic slash commands such as /skills, /skill_*)
   - MessageHandler(TEXT & ~COMMAND) -> handler_callback
   - CallbackQueryHandler -> handler_callback
 
@@ -28,6 +30,7 @@ import logging
 from typing import TYPE_CHECKING, Callable, Coroutine, Any
 
 from telegram import Update
+from telegram.error import NetworkError, TimedOut, RetryAfter, Forbidden
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -47,6 +50,33 @@ HandlerCallback = Callable[
     [Update, ContextTypes.DEFAULT_TYPE],
     Coroutine[Any, Any, None],
 ]
+
+
+def _safe_update_repr(update: object) -> str:
+    try:
+        if isinstance(update, Update):
+            if update.effective_chat and update.effective_message:
+                return f"chat={update.effective_chat.id} msg={update.effective_message.message_id}"
+            if update.effective_chat:
+                return f"chat={update.effective_chat.id}"
+        return str(update)
+    except Exception:
+        return "<unavailable update repr>"
+
+
+async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    err = context.error
+    where = _safe_update_repr(update)
+    if isinstance(err, RetryAfter):
+        logger.warning("Telegram retry-after (%ss) while handling %s", getattr(err, "retry_after", "?"), where)
+        return
+    if isinstance(err, (TimedOut, NetworkError)):
+        logger.warning("Telegram network error while handling %s: %s", where, err)
+        return
+    if isinstance(err, Forbidden):
+        logger.warning("Telegram forbidden while handling %s: %s", where, err)
+        return
+    logger.exception("Unhandled telegram error while handling %s: %s", where, err)
 
 
 def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
@@ -71,8 +101,13 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
         .build()
     )
 
-    # /start -> handler_callback (so owner registration + welcome works)
+    # /start and /reload -> handler_callback
     application.add_handler(CommandHandler("start", handler_callback))
+    application.add_handler(CommandHandler("reload", handler_callback))
+
+    # Slash commands not explicitly registered above (e.g. /skills, /skill_*)
+    # route to the unified handler callback.
+    application.add_handler(MessageHandler(filters.COMMAND, handler_callback))
 
     # Text messages (not commands) -> handler_callback
     application.add_handler(
@@ -81,6 +116,9 @@ def run_bot(config: Config, handler_callback: HandlerCallback) -> None:
 
     # Button presses (inline keyboard callbacks) -> handler_callback
     application.add_handler(CallbackQueryHandler(handler_callback))
+
+    # Centralized error logging for easier debugging.
+    application.add_error_handler(_on_error)
 
     logger.info("Starting long-polling...")
     application.run_polling(

@@ -133,6 +133,11 @@ def _run_telegram_only(config, store, backend) -> None:
     from onecmd.bot.handler import create_handler
     from onecmd.bot.poller import run_bot
 
+    log.info(
+        "Agent mode active: %s (skills_dir=%s)",
+        getattr(config, "agent_mode", "legacy"),
+        getattr(config, "skills_dir", ".onecmd/skills"),
+    )
     handler = create_handler(config, store, backend)
     log.info("Starting bot (Telegram only)...")
     try:

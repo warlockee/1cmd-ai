@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
 from onecmd.bot.handler import (
     HELP_TEXT,
     _build_list_text,
+    _cmd_skill_slash,
     _send_keystrokes,
     create_handler,
 )
@@ -56,6 +58,7 @@ def bot():
     b.delete_message = AsyncMock()
     b.answer_callback_query = AsyncMock()
     b.pin_chat_message = AsyncMock()
+    b.set_my_commands = AsyncMock()
     return b
 
 
@@ -125,7 +128,8 @@ def _run(coro):
 
 class TestBuildListText:
     def test_empty_terminals(self):
-        assert _build_list_text([]) == "No terminal sessions found."
+        text = _build_list_text([])
+        assert text.startswith("No terminal sessions found.")
 
     @patch("onecmd.bot.handler._load_aliases", return_value={})
     def test_terminals_listed(self, _mock_aliases):
@@ -280,6 +284,240 @@ class TestHelpCommand:
 
         text_sent = bot.send_message.call_args[1]["text"]
         assert text_sent == HELP_TEXT
+
+
+class TestReloadCommand:
+    def test_reload_sets_base_and_skill_commands(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy.json").write_text(json.dumps({
+            "name": "Deploy-App",
+            "description": "Deploy app",
+            "steps": [],
+        }))
+        (skills_dir / "cleanup.json").write_text(json.dumps({
+            "name": "Cleanup 123",
+            "steps": [],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        bot.set_my_commands.assert_awaited_once()
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skills", "skill_cleanup_123", "skill_deploy_app"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Reloaded 5 commands" in text_sent
+        assert "/reload" in text_sent
+
+    def test_reload_uses_registry_enabled_slash_and_custom_command(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        deploy_dir = skills_dir / "deploy-check"
+        deploy_dir.mkdir()
+        (deploy_dir / "SKILL.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        hidden_dir = skills_dir / "hidden-skill"
+        hidden_dir.mkdir()
+        (hidden_dir / "SKILL.json").write_text(json.dumps({
+            "name": "hidden-skill",
+            "steps": [],
+        }))
+        noslash_dir = skills_dir / "no-slash"
+        noslash_dir.mkdir()
+        (noslash_dir / "SKILL.json").write_text(json.dumps({
+            "name": "no-slash",
+            "steps": [],
+        }))
+        (skills_dir / "skills.json").write_text(json.dumps({
+            "version": 1,
+            "skills": [
+                {"name": "deploy-check", "command": "ship_it", "description": "Ship it"},
+                {"name": "hidden-skill", "enabled": False},
+                {"name": "no-slash", "slash": False},
+            ],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skills", "skill_ship_it"]
+
+    def test_reload_warns_on_invalid_registry_entries(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        valid_dir = skills_dir / "deploy-check"
+        valid_dir.mkdir()
+        (valid_dir / "SKILL.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        (skills_dir / "skills.json").write_text(json.dumps({
+            "version": 1,
+            "skills": [
+                {"name": "deploy-check", "description": "Deploy"},
+                {"name": "missing-skill"},
+                {"name": "deploy-check", "command": ""},
+                "bad-entry",
+            ],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skills", "skill_deploy_check"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Warning:" in text_sent
+        assert "invalid registry entries" in text_sent
+
+    def test_reload_warns_when_skills_dir_missing(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        missing_dir = tmp_path / "missing-skills"
+        handler = create_handler(config.model_copy(update={"skills_dir": str(missing_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        bot.set_my_commands.assert_awaited_once()
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skills"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Reloaded 3 commands" in text_sent
+        assert "Warning:" in text_sent
+
+    def test_reload_with_single_bootstrap_skill_registry(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        new_skill_dir = skills_dir / "new-skill"
+        new_skill_dir.mkdir()
+        (new_skill_dir / "SKILL.json").write_text(json.dumps({
+            "name": "new-skill",
+            "description": "Bootstrap a new skill scaffold.",
+            "steps": [],
+        }))
+        (skills_dir / "skills.json").write_text(json.dumps({
+            "version": 1,
+            "skills": [
+                {"name": "new-skill", "enabled": True, "slash": True},
+            ],
+        }))
+        handler = create_handler(config.model_copy(update={"skills_dir": str(skills_dir)}), store, backend)
+
+        _run(handler(_make_update("/reload", user_id=1), _make_context(bot)))
+
+        commands = bot.set_my_commands.await_args.args[0]
+        names = [command.command for command in commands]
+        assert names == ["start", "reload", "skills", "skill_new_skill"]
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Reloaded 4 commands" in text_sent
+
+
+class TestSkillSlashCommands:
+    @patch("onecmd.bot.handler.tool_run_skill")
+    def test_skill_slash_triggers_runtime_call(self, mock_run_skill, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        mock_run_skill.return_value = "skill result"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy-check.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        handler = create_handler(
+            config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"}),
+            store,
+            backend,
+        )
+
+        _run(handler(_make_update("/skill_deploy_check ship it", user_id=1), _make_context(bot)))
+
+        mock_run_skill.assert_called_once()
+        args = mock_run_skill.call_args.args[1]
+        assert args["skill_name"] == "deploy-check"
+        assert args["inputs"] == {"request": "ship it"}
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert text_sent == "skill result"
+
+    def test_unknown_skill_slash_gives_helpful_message(self, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        handler = create_handler(
+            config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"}),
+            store,
+            backend,
+        )
+
+        _run(handler(_make_update("/skill_missing do work", user_id=1), _make_context(bot)))
+
+        text_sent = bot.send_message.call_args[1]["text"]
+        assert "Unknown skill command" in text_sent
+        assert "/reload" in text_sent
+
+    @patch("onecmd.bot.handler.tool_run_skill")
+    def test_skill_slash_parses_json_input(self, mock_run_skill, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        mock_run_skill.return_value = "json result"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy-check.json").write_text(json.dumps({
+            "name": "deploy-check",
+            "steps": [],
+        }))
+        handler = create_handler(
+            config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"}),
+            store,
+            backend,
+        )
+
+        _run(handler(_make_update('/skill_deploy_check {"env":"prod","force":true}', user_id=1), _make_context(bot)))
+
+        args = mock_run_skill.call_args.args[1]
+        assert args["inputs"] == {"env": "prod", "force": True}
+
+    @patch("onecmd.bot.handler.tool_run_skill")
+    def test_skill_slash_ctx_bridges_step_dispatch_in_skills_mode(self, mock_run_skill, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        mock_run_skill.return_value = "ok"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy-check.json").write_text(json.dumps({"name": "deploy-check", "steps": []}))
+
+        mock_agent = MagicMock()
+        mock_agent._build_tool_ctx.return_value = {"dispatch_fn": lambda *_: "noop"}
+        mock_router = MagicMock()
+        mock_router._agent = mock_agent
+
+        cfg = config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"})
+
+        with patch.object(Config, "has_llm_key", new_callable=PropertyMock, return_value=True):
+            _run(
+                _cmd_skill_slash(
+                    bot,
+                    111,
+                    "/skill_deploy_check",
+                    None,
+                    backend,
+                    store,
+                    cfg,
+                    router=mock_router,
+                )
+            )
+
+        ctx = mock_run_skill.call_args.args[0]
+        assert "skill_step_dispatch_fn" in ctx
+        assert callable(ctx["skill_step_dispatch_fn"])
 
 
 class TestExitCommand:
