@@ -261,6 +261,37 @@ def _parse_skill_inputs(text: str) -> dict[str, object]:
     return {"request": payload}
 
 
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _localize_skill_result(result: str, user_text: str) -> str:
+    """Translate common skill wrapper text to Chinese when user uses Chinese.
+
+    This keeps raw command output intact and only localizes framework phrases.
+    """
+    if not _contains_cjk(user_text):
+        return result
+
+    replacements = [
+        ("Running skill:", "正在执行 skill："),
+        ("Skill completed.", "Skill 执行完成。"),
+        ("Dry run only. No tools executed.", "仅预演（dry run），未执行任何工具。"),
+        ("Skill failed:", "Skill 执行失败："),
+        ("Skill stopped:", "Skill 已停止："),
+        ("Skill fallback:", "Skill 回退："),
+        ("Unknown tool:", "未知工具："),
+        ("Command queued for terminal", "已向终端排队命令"),
+        ("Command sent to terminal", "已向终端发送命令"),
+        ("Run /reload to refresh slash commands.", "请运行 /reload 刷新 slash 命令。"),
+    ]
+
+    localized = result
+    for src, dst in replacements:
+        localized = localized.replace(src, dst)
+    return localized
+
+
 def _find_skill_command(config: Config, command_name: str) -> tuple[dict[str, str] | None, list[str]]:
     skill_commands, warnings = _load_skill_command_metadata(config)
     for entry in skill_commands:
@@ -352,10 +383,13 @@ async def _cmd_skill_slash(bot, chat_id, text, _s, backend, _store, config, rout
         result = await loop.run_in_executor(None, tool_run_skill, ctx, args)
     except Exception as exc:
         logger.exception("skill slash command failed: %s", command_name)
-        await send_message(bot, chat_id, f"Skill failed: {html_escape(str(exc))}")
+        fail_msg = f"Skill failed: {str(exc)}"
+        fail_msg = _localize_skill_result(fail_msg, text)
+        await send_message(bot, chat_id, html_escape(fail_msg))
         return
 
-    escaped = html_escape(result)
+    localized_result = _localize_skill_result(result, text)
+    escaped = html_escape(localized_result)
     msg_id = await send_message(bot, chat_id, escaped)
     if msg_id is None:
         # Fallback for unexpected formatting edge-cases
