@@ -1001,14 +1001,18 @@ _REQUIRES_TERMINAL_READ: set[str] = {
 def _ensure_terminal_read(tool_args: dict[str, Any],
                           ctx: dict[str, Any]) -> str | None:
     """Auto-read a terminal if it hasn't been read yet. Returns content or None."""
-    tid = tool_args.get("terminal_id", "")
-    if not tid:
+    raw_tid = tool_args.get("terminal_id", "")
+    if not raw_tid:
+        return None
+    backend: _Backend = ctx["backend"]
+    try:
+        tid = _resolve_terminal_id(backend, str(raw_tid))
+    except ValueError:
         return None
     with _activity_lock:
         if tid in _activity:
             return None  # already read
     # Auto-read — same logic as tool_read_terminal
-    backend: _Backend = ctx["backend"]
     out = backend.capture(tid)
     if out is None:
         return None
