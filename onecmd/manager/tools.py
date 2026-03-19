@@ -235,8 +235,8 @@ def _resolve_terminal_id(backend: _Backend, raw_tid: str) -> str:
 
     Supports:
     - exact backend id (e.g. "%0", "119")
-    - dot index (e.g. ".1") using current backend.list() order
-    - numeric index (e.g. "1") as fallback convenience
+    - dot index (e.g. ".1") using 1-based backend.list() order
+    - numeric index (e.g. "1") as fallback convenience using 1-based order
     - alias name set by rename_terminal
     """
     tid = str(raw_tid).strip()
@@ -251,14 +251,14 @@ def _resolve_terminal_id(backend: _Backend, raw_tid: str) -> str:
     # dot-index selector used by .list UX
     if tid.startswith(".") and tid[1:].isdigit():
         idx = int(tid[1:])
-        if 0 <= idx < len(terms):
-            return str(terms[idx].id)
+        if 1 <= idx <= len(terms):
+            return str(terms[idx - 1].id)
 
     # raw numeric index fallback
     if tid.isdigit():
         idx = int(tid)
-        if 0 <= idx < len(terms):
-            return str(terms[idx].id)
+        if 1 <= idx <= len(terms):
+            return str(terms[idx - 1].id)
 
     # alias lookup
     aliases = _read_aliases()
