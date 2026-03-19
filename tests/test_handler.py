@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
 from onecmd.bot.handler import (
     HELP_TEXT,
     _build_list_text,
+    _cmd_skill_slash,
     _send_keystrokes,
     create_handler,
 )
@@ -484,6 +485,39 @@ class TestSkillSlashCommands:
 
         args = mock_run_skill.call_args.args[1]
         assert args["inputs"] == {"env": "prod", "force": True}
+
+    @patch("onecmd.bot.handler.tool_run_skill")
+    def test_skill_slash_ctx_bridges_step_dispatch_in_skills_mode(self, mock_run_skill, tmp_path, bot, store, backend, config):
+        store._data["owner_id"] = "1"
+        mock_run_skill.return_value = "ok"
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "deploy-check.json").write_text(json.dumps({"name": "deploy-check", "steps": []}))
+
+        mock_agent = MagicMock()
+        mock_agent._build_tool_ctx.return_value = {"dispatch_fn": lambda *_: "noop"}
+        mock_router = MagicMock()
+        mock_router._agent = mock_agent
+
+        cfg = config.model_copy(update={"skills_dir": str(skills_dir), "agent_mode": "skills"})
+
+        with patch.object(Config, "has_llm_key", new_callable=PropertyMock, return_value=True):
+            _run(
+                _cmd_skill_slash(
+                    bot,
+                    111,
+                    "/skill_deploy_check",
+                    None,
+                    backend,
+                    store,
+                    cfg,
+                    router=mock_router,
+                )
+            )
+
+        ctx = mock_run_skill.call_args.args[0]
+        assert "skill_step_dispatch_fn" in ctx
+        assert callable(ctx["skill_step_dispatch_fn"])
 
 
 class TestExitCommand:

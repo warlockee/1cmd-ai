@@ -275,7 +275,12 @@ def _build_slash_skill_ctx(chat_id: int, config: Config, backend: ValidatedBacke
             router._init_agent()
         agent = getattr(router, "_agent", None)
         if agent is not None:
-            return agent._build_tool_ctx(chat_id)
+            ctx = agent._build_tool_ctx(chat_id)
+            # In skills mode, slash /skill_* commands call tool_run_skill directly.
+            # Steps inside a skill (e.g. send_command/read_terminal) must be
+            # dispatched via legacy tool dispatch, not the skills-only dispatcher.
+            ctx["skill_step_dispatch_fn"] = tool_dispatch
+            return ctx
 
     return {
         "backend": backend,
