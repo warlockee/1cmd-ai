@@ -230,10 +230,52 @@ def tool_list_terminals(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _resolve_terminal_id(backend: _Backend, raw_tid: str) -> str:
+    """Resolve user-friendly terminal selectors to backend terminal id.
+
+    Supports:
+    - exact backend id (e.g. "%0", "119")
+    - dot index (e.g. ".1") using current backend.list() order
+    - numeric index (e.g. "1") as fallback convenience
+    - alias name set by rename_terminal
+    """
+    tid = str(raw_tid).strip()
+    terms = backend.list()
+    if not terms:
+        raise ValueError("No terminal sessions found")
+
+    id_set = {str(t.id) for t in terms}
+    if tid in id_set:
+        return tid
+
+    # dot-index selector used by .list UX
+    if tid.startswith(".") and tid[1:].isdigit():
+        idx = int(tid[1:])
+        if 0 <= idx < len(terms):
+            return str(terms[idx].id)
+
+    # raw numeric index fallback
+    if tid.isdigit():
+        idx = int(tid)
+        if 0 <= idx < len(terms):
+            return str(terms[idx].id)
+
+    # alias lookup
+    aliases = _read_aliases()
+    for _id, alias in aliases.items():
+        if alias == tid and _id in id_set:
+            return str(_id)
+
+    raise ValueError(f"Unknown terminal ID: {raw_tid}")
+
+
 def tool_read_terminal(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Capture the current visible text from a terminal (last N lines)."""
     backend: _Backend = ctx["backend"]
-    tid: str = args["terminal_id"]
+    try:
+        tid = _resolve_terminal_id(backend, str(args["terminal_id"]))
+    except ValueError as exc:
+        return f"{exc}"
     out = backend.capture(tid)
     if out is None:
         return f"[Error capturing terminal {tid}]"
@@ -249,7 +291,10 @@ def tool_send_command(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Send keystrokes to a terminal via the command queue."""
     backend: _Backend = ctx["backend"]
     queue_cls = ctx["queue_cls"]
-    tid: str = args["terminal_id"]
+    try:
+        tid = _resolve_terminal_id(backend, str(args["terminal_id"]))
+    except ValueError as exc:
+        return f"{exc}"
     keys: str = _decode_escapes(args["keys"])
     description: str = args["description"]
     stable_seconds: float = args.get("stable_seconds", 5.0)
