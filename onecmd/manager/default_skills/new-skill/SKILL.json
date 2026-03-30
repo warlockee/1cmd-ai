@@ -1,0 +1,8 @@
+{
+  "name": "new-skill",
+  "version": "1.0.0",
+  "description": "Bootstrap template for creating new skills.",
+  "mode": "capability",
+  "always_loaded": false,
+  "max_context_chars": 4000
+}

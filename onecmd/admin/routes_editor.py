@@ -1,17 +1,18 @@
-"""Editor API routes for the admin panel — .onecmd/ files and memories.
+"""Editor API routes for the admin panel — skills files and memories.
 
 Calling spec:
-  Inputs: .onecmd/ directory (auto-discovered), memory DB
+  Inputs: skills module API, memory DB
   Outputs: file contents, memory records
-  Side effects: file writes, SOP reload, memory CRUD
+  Side effects: file writes, skills reload, memory CRUD
 
 Routes:
-  GET    /api/files              -> list all .onecmd/*.md files
+  GET    /api/files              -> list all editable files (skills + system)
   GET    /api/files/{key}        -> read file content
-  PUT    /api/files/{key}        -> write file + trigger SOP reload
+  PUT    /api/files/{key}        -> write file + trigger skills reload
   POST   /api/files              -> create a new .md file
   DELETE /api/files/{key}        -> delete a user-created .md file
-  POST   /api/files/reload       -> force SOP reload
+  POST   /api/files/{key}/reset  -> reset to bundled default
+  POST   /api/files/reload       -> force skills reload
   GET    /api/memories           -> list all memories
   POST   /api/memories           -> create memory
   PUT    /api/memories/{id}      -> update memory content
@@ -20,87 +21,19 @@ Routes:
 
 
 import logging
-from pathlib import Path
+import shutil
 from typing import TYPE_CHECKING, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from onecmd.admin.auth import require_auth
-from onecmd.manager import memory, sop
+from onecmd.manager import memory, skills
 
 if TYPE_CHECKING:
     from fastapi import Request
 
 log = logging.getLogger(__name__)
-
-_SOP_DIR = Path(sop.SOP_DIR)
-
-# System-managed files that cannot be deleted (but can be edited)
-_PROTECTED_FILES: set[str] = {
-    "agent_sop.md",
-    "custom_rules.md",
-    "ai_personality.md",
-    "crash_patterns.md",
-    "cron_prompt.md",
-}
-
-# Friendly labels for known files
-_LABELS: dict[str, str] = {
-    "agent_sop.md": "Agent SOP",
-    "custom_rules.md": "Custom Rules",
-    "ai_personality.md": "AI Personality",
-    "crash_patterns.md": "Crash Patterns",
-    "cron_prompt.md": "Cron Prompt",
-}
-
-# Bundled defaults for reset (filename → source path)
-_BUNDLED_DEFAULTS: dict[str, Path] = {
-    "agent_sop.md": Path(__file__).parent.parent / "manager" / "default_sop.md",
-    "ai_personality.md": Path(__file__).parent.parent / "manager" / "default_agent_prompt.md",
-    "crash_patterns.md": Path(__file__).parent.parent / "manager" / "default_crash_patterns.md",
-    "cron_prompt.md": Path(__file__).parent.parent / "cron" / "default_compiler_prompt.md",
-}
-
-
-def _file_key(name: str) -> str:
-    """Convert filename to API key (strip .md)."""
-    return name.removesuffix(".md")
-
-
-def _file_label(name: str) -> str:
-    """Human-readable label for a file."""
-    if name in _LABELS:
-        return _LABELS[name]
-    # Auto-generate from filename
-    return name.removesuffix(".md").replace("_", " ").replace("-", " ").title()
-
-
-def _discover_files() -> list[dict]:
-    """Auto-discover all .md files in .onecmd/ directory."""
-    # Ensure defaults exist first
-    sop.ensure_sop()
-
-    files = []
-    if _SOP_DIR.is_dir():
-        for f in sorted(_SOP_DIR.glob("*.md")):
-            files.append({
-                "key": _file_key(f.name),
-                "label": _file_label(f.name),
-                "filename": f.name,
-                "path": str(f),
-                "protected": f.name in _PROTECTED_FILES,
-                "has_default": f.name in _BUNDLED_DEFAULTS,
-            })
-    return files
-
-
-def _resolve_path(key: str) -> Path:
-    """Resolve an API key to a file path. Raises 404 if not found."""
-    path = _SOP_DIR / f"{key}.md"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {key}.md")
-    return path
 
 
 # ---------------------------------------------------------------------------
@@ -142,39 +75,38 @@ editor_router = APIRouter(tags=["editor"])
 
 @editor_router.get("/api/files")
 async def list_files(_auth: bool = Depends(require_auth)):
-    """Return all .md files in .onecmd/ (auto-discovered)."""
-    return _discover_files()
+    """Return all editable files (system + skill resources)."""
+    return skills.discover_files()
 
 
-@editor_router.get("/api/files/{key}")
+@editor_router.get("/api/files/{key:path}")
 async def read_file(key: str, _auth: bool = Depends(require_auth)):
     """Read the content of a file."""
-    # Ensure defaults exist
-    sop.ensure_sop()
+    skills.ensure_skills()
 
-    path = _SOP_DIR / f"{key}.md"
+    path = skills.resolve_file(key)
     try:
         content = path.read_text()
     except OSError:
-        raise HTTPException(status_code=404, detail=f"File not found: {key}.md")
+        raise HTTPException(status_code=404, detail=f"File not found: {key}")
 
     return {
         "key": key,
-        "label": _file_label(path.name),
+        "label": path.stem.replace("_", " ").replace("-", " ").title(),
         "content": content,
-        "protected": path.name in _PROTECTED_FILES,
-        "has_default": path.name in _BUNDLED_DEFAULTS,
+        "protected": skills.is_system_file(key),
+        "has_default": skills.get_bundled_default(key) is not None,
     }
 
 
-@editor_router.put("/api/files/{key}")
+@editor_router.put("/api/files/{key:path}")
 async def write_file(
     key: str,
     body: FileWriteRequest,
     _auth: bool = Depends(require_auth),
 ):
-    """Write content to a file and reload the SOP."""
-    path = _SOP_DIR / f"{key}.md"
+    """Write content to a file and reload skills."""
+    path = skills.resolve_file(key)
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,9 +115,8 @@ async def write_file(
         log.error("Failed to write %s: %s", path, exc)
         raise HTTPException(status_code=500, detail=f"Write failed: {exc}")
 
-    # Rebuild the SOP so changes take effect immediately
-    sop.ensure_sop()
-    log.info("File '%s' saved and SOP reloaded", key)
+    skills.invalidate_cache()
+    log.info("File '%s' saved and skills reloaded", key)
 
     return {"ok": True, "reloaded": True}
 
@@ -195,86 +126,83 @@ async def create_file(
     body: FileCreateRequest,
     _auth: bool = Depends(require_auth),
 ):
-    """Create a new .md file in .onecmd/."""
-    # Sanitize name
+    """Create a new .md file."""
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Name cannot be empty")
     if not name.endswith(".md"):
         name += ".md"
-    # Basic path safety
-    if "/" in name or "\\" in name or ".." in name:
+    if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    path = _SOP_DIR / name
+    key = name.removesuffix(".md")
+    path = skills.resolve_file(key)
     if path.exists():
         raise HTTPException(status_code=409, detail=f"File already exists: {name}")
 
+    label = name.removesuffix(".md").replace("_", " ").replace("-", " ").title()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        content = body.content or f"# {_file_label(name)}\n\n"
+        content = body.content or f"# {label}\n\n"
         path.write_text(content)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Create failed: {exc}")
 
     log.info("Created new file: %s", path)
-    return {"ok": True, "key": _file_key(name), "label": _file_label(name)}
+    return {"ok": True, "key": key, "label": label}
 
 
-@editor_router.delete("/api/files/{key}")
+@editor_router.delete("/api/files/{key:path}")
 async def delete_file(
     key: str,
     _auth: bool = Depends(require_auth),
 ):
-    """Delete a user-created .md file. Protected files cannot be deleted."""
-    path = _SOP_DIR / f"{key}.md"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {key}.md")
-    if path.name in _PROTECTED_FILES:
+    """Delete a user-created file. System files cannot be deleted."""
+    if skills.is_system_file(key):
         raise HTTPException(status_code=403, detail="Cannot delete a system file")
+
+    path = skills.resolve_file(key)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {key}")
 
     try:
         path.unlink()
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Delete failed: {exc}")
 
+    skills.invalidate_cache()
     log.info("Deleted file: %s", path)
     return {"ok": True, "deleted": key}
 
 
-@editor_router.post("/api/files/{key}/reset")
+@editor_router.post("/api/files/{key:path}/reset")
 async def reset_file(
     key: str,
     _auth: bool = Depends(require_auth),
 ):
-    """Reset a file to its bundled default. Only works for files with defaults."""
-    filename = f"{key}.md"
-    src = _BUNDLED_DEFAULTS.get(filename)
+    """Reset a file to its bundled default."""
+    src = skills.get_bundled_default(key)
     if src is None:
-        raise HTTPException(
-            status_code=400, detail=f"No bundled default for {filename}")
-    if not src.exists():
-        raise HTTPException(
-            status_code=500, detail="Bundled default file missing from package")
+        raise HTTPException(status_code=400, detail=f"No bundled default for {key}")
 
-    dest = _SOP_DIR / filename
+    dest = skills.resolve_file(key)
     try:
-        import shutil
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Reset failed: {exc}")
 
-    sop.ensure_sop()
+    skills.invalidate_cache()
     log.info("Reset '%s' to bundled default", key)
     return {"ok": True, "reset": key}
 
 
 @editor_router.post("/api/files/reload")
-async def reload_sop(_auth: bool = Depends(require_auth)):
-    """Force a SOP reload."""
-    sop.ensure_sop()
-    log.info("SOP force-reloaded via admin")
+async def reload_skills(_auth: bool = Depends(require_auth)):
+    """Force a skills reload."""
+    skills.invalidate_cache()
+    skills.ensure_skills()
+    log.info("Skills force-reloaded via admin")
     return {"ok": True}
 
 

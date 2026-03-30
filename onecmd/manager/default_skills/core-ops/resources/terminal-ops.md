@@ -1,4 +1,4 @@
-# OneCmd Agent SOP
+# Core Operations
 
 ## Act, Don't Ask — Decision Authority
 

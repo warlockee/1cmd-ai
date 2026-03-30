@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------
- *  Editor tab — SOP files + memories
+ *  Editor tab — Skills files + memories
  * --------------------------------------------------------------- */
 (function () {
     'use strict';
@@ -40,7 +40,7 @@
                     <div class="editor-sidebar-title">Files</div>
                     <div id="editor-file-list"></div>
                     <div style="margin-top:auto;padding-top:16px;">
-                        <button class="btn btn-ghost btn-sm" id="editor-reload-btn" style="width:100%">Reload SOP</button>
+                        <button class="btn btn-ghost btn-sm" id="editor-reload-btn" style="width:100%">Reload Skills</button>
                     </div>
                 </div>
                 <div class="editor-main">
@@ -72,7 +72,7 @@
         $memBody = document.getElementById('editor-mem-tbody');
 
         document.getElementById('editor-save-btn').addEventListener('click', saveFile);
-        document.getElementById('editor-reload-btn').addEventListener('click', reloadSOP);
+        document.getElementById('editor-reload-btn').addEventListener('click', reloadSkills);
         document.getElementById('editor-mem-add-btn').addEventListener('click', showAddForm);
     }
 
@@ -148,10 +148,10 @@
         } catch (e) { if (e.message !== 'auth') window.showToast('Save failed: ' + e.message, 'error'); }
     }
 
-    async function reloadSOP() {
+    async function reloadSkills() {
         try {
             await api('/api/files/reload', { method: 'POST' });
-            window.showToast('SOP reloaded', 'success');
+            window.showToast('Skills reloaded', 'success');
         } catch (e) { if (e.message !== 'auth') window.showToast('Reload failed: ' + e.message, 'error'); }
     }
 

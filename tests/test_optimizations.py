@@ -1,11 +1,11 @@
 """Tests for optimization changes: caching, token guards, memory caps.
 
 Covers:
-  1. mtime-based SOP caching (sop.py)
-  2. Auto-pickup size limits (sop.py)
-  3. Memory save-time content cap (memory.py)
-  4. Memory prompt assembly limits (agent.py)
-  5. Agent prompt file caching (agent.py)
+  1. Skills caching (skills.py) — see test_skills.py for full coverage
+  2. Memory save-time content cap (memory.py)
+  3. Memory prompt assembly limits (agent.py)
+  4. Agent prompt file caching (agent.py)
+  5. Dir fingerprint helper (skills.py)
 """
 from __future__ import annotations
 
@@ -17,16 +17,11 @@ from unittest.mock import patch
 import pytest
 
 import onecmd.manager.memory as memory
-from onecmd.manager import sop as sop_mod
-from onecmd.manager.sop import (
-    MAX_FILE_CHARS,
-    MAX_EXTRAS_CHARS,
-    MAX_SOP_CHARS,
-    _read_extra_files,
+from onecmd.manager.skills import (
     _dir_fingerprint,
-    ensure_sop,
+    _skills_cache,
+    ensure_skills,
     invalidate_cache,
-    _sop_cache,
 )
 from onecmd.manager.agent import (
     _build_system_prompt,
@@ -42,12 +37,12 @@ from onecmd.manager.agent import (
 
 
 @pytest.fixture()
-def sop_env(tmp_path, monkeypatch):
-    """Run SOP functions in a temp directory with a clean cache."""
+def skills_env(tmp_path, monkeypatch):
+    """Run skills functions in a temp directory with a clean cache."""
     monkeypatch.chdir(tmp_path)
-    _sop_cache.clear()
+    _skills_cache.clear()
     yield tmp_path
-    _sop_cache.clear()
+    _skills_cache.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -67,154 +62,31 @@ def _tmp_memory_db(tmp_path):
 
 
 # ===========================================================================
-# 1. SOP caching tests
+# 1. Skills caching tests
 # ===========================================================================
 
 
-class TestSOPCaching:
-    """mtime-based caching in ensure_sop()."""
+class TestSkillsCaching:
+    """mtime-based caching in ensure_skills()."""
 
-    def test_returns_cached_on_second_call(self, sop_env):
+    def test_returns_cached_on_second_call(self, skills_env):
         """Second call returns same string without re-reading files."""
-        first = ensure_sop()
-        second = ensure_sop()
+        first = ensure_skills()
+        second = ensure_skills()
         assert first == second
-        # Cache should now have an entry
-        assert "sop" in _sop_cache
+        assert "skills" in _skills_cache
 
-    def test_cache_invalidates_on_file_modify(self, sop_env):
-        """Modifying a file in .onecmd/ changes the fingerprint -> cache miss."""
-        first = ensure_sop()
-
-        sop_path = sop_env / ".onecmd" / "agent_sop.md"
-        assert sop_path.exists()
-        # Ensure mtime actually differs (some filesystems have 1s resolution)
-        time.sleep(0.05)
-        sop_path.write_text("modified SOP content")
-        # Force mtime change for filesystems with coarse resolution
-        new_mtime = sop_path.stat().st_mtime + 1.0
-        os.utime(sop_path, (new_mtime, new_mtime))
-
-        second = ensure_sop()
-        assert "modified SOP content" in second
-        assert first != second
-
-    def test_cache_invalidates_on_file_add(self, sop_env):
-        """Adding a new .md file changes fingerprint -> cache miss."""
-        first = ensure_sop()
-        fp_before = _sop_cache.get("sop", (None,))[0]
-
-        new_file = sop_env / ".onecmd" / "extra_guide.md"
-        new_file.write_text("Extra guidance here\n")
-        # Bump mtime to be sure
-        new_mtime = new_file.stat().st_mtime + 1.0
-        os.utime(new_file, (new_mtime, new_mtime))
-
-        second = ensure_sop()
-        fp_after = _sop_cache.get("sop", (None,))[0]
-        # Fingerprint must have changed
-        assert fp_before != fp_after
-        assert "Extra Guidance" in second or "Extra guidance here" in second
-
-    def test_cache_invalidates_on_file_delete(self, sop_env):
-        """Deleting a file changes fingerprint -> cache miss."""
-        # Create an extra file
-        sop_dir = sop_env / ".onecmd"
-        sop_dir.mkdir(parents=True, exist_ok=True)
-        extra = sop_dir / "deleteme.md"
-        extra.write_text("will be deleted\n")
-
-        first = ensure_sop()
-        fp_before = _sop_cache["sop"][0]
-
-        extra.unlink()
-
-        second = ensure_sop()
-        fp_after = _sop_cache["sop"][0]
-        assert fp_before != fp_after
-
-    def test_invalidate_cache_forces_reread(self, sop_env):
+    def test_invalidate_cache_forces_reread(self, skills_env):
         """invalidate_cache() clears the cache dict."""
-        ensure_sop()
-        assert "sop" in _sop_cache
+        ensure_skills()
+        assert "skills" in _skills_cache
 
         invalidate_cache()
-        assert "sop" not in _sop_cache
+        assert "skills" not in _skills_cache
 
 
 # ===========================================================================
-# 2. Auto-pickup size limits
-# ===========================================================================
-
-
-class TestAutoPickupLimits:
-    """Token consumption guards in _read_extra_files and ensure_sop."""
-
-    def test_large_file_truncated(self, sop_env):
-        """A file larger than MAX_FILE_CHARS gets truncated with marker."""
-        sop_dir = sop_env / ".onecmd"
-        sop_dir.mkdir(parents=True, exist_ok=True)
-
-        big_file = sop_dir / "bigfile.md"
-        # Write content larger than the cap (all non-comment lines)
-        big_file.write_text("x" * (MAX_FILE_CHARS + 5000))
-
-        extras = _read_extra_files(sop_dir)
-        assert len(extras) == 1
-        assert "[...truncated]" in extras[0]
-        # The section (including header) should be capped near MAX_FILE_CHARS
-        # (header adds a few chars, then the cap plus the marker)
-        assert len(extras[0]) <= MAX_FILE_CHARS + 100  # generous margin for header + marker
-
-    def test_total_extras_budget_stops_including(self, sop_env):
-        """When total budget is exhausted, remaining files are skipped."""
-        sop_dir = sop_env / ".onecmd"
-        sop_dir.mkdir(parents=True, exist_ok=True)
-
-        # Each file just under MAX_FILE_CHARS so they aren't truncated individually
-        file_size = MAX_FILE_CHARS - 200  # room for the header
-        num_files = (MAX_EXTRAS_CHARS // file_size) + 5  # more files than budget allows
-
-        for i in range(num_files):
-            f = sop_dir / f"zzz_extra_{i:03d}.md"
-            f.write_text("a" * file_size)
-
-        extras = _read_extra_files(sop_dir)
-        total = sum(len(s) for s in extras)
-        # Total should be within the budget
-        assert total <= MAX_EXTRAS_CHARS
-        # Some files must have been skipped
-        assert len(extras) < num_files
-
-    def test_final_sop_truncated_at_hard_cap(self, sop_env):
-        """Assembled SOP exceeding MAX_SOP_CHARS is truncated with marker."""
-        # Write a massive base SOP to blow past the cap
-        sop_dir = sop_env / ".onecmd"
-        sop_dir.mkdir(parents=True, exist_ok=True)
-        sop_file = sop_dir / "agent_sop.md"
-        sop_file.write_text("B" * (MAX_SOP_CHARS + 5000))
-
-        result = ensure_sop()
-        assert "[...SOP truncated]" in result
-        # Length should be around MAX_SOP_CHARS + marker
-        assert len(result) <= MAX_SOP_CHARS + 50
-
-    def test_small_file_not_truncated(self, sop_env):
-        """Files well under the cap are included in full."""
-        sop_dir = sop_env / ".onecmd"
-        sop_dir.mkdir(parents=True, exist_ok=True)
-
-        small_file = sop_dir / "tips.md"
-        small_file.write_text("Always be kind to your servers.\n")
-
-        extras = _read_extra_files(sop_dir)
-        assert len(extras) == 1
-        assert "[...truncated]" not in extras[0]
-        assert "Always be kind to your servers." in extras[0]
-
-
-# ===========================================================================
-# 3. Memory save-time content cap
+# 2. Memory save-time content cap
 # ===========================================================================
 
 
@@ -257,7 +129,7 @@ class TestMemorySaveTimeCap:
 
 
 # ===========================================================================
-# 4. Memory prompt assembly limits
+# 3. Memory prompt assembly limits
 # ===========================================================================
 
 
@@ -323,7 +195,7 @@ class TestMemoryPromptAssembly:
 
 
 # ===========================================================================
-# 5. Agent prompt file caching
+# 4. Agent prompt file caching
 # ===========================================================================
 
 
@@ -405,12 +277,12 @@ class TestAgentPromptCaching:
 
 
 # ===========================================================================
-# 6. Dir fingerprint helper
+# 5. Dir fingerprint helper
 # ===========================================================================
 
 
 class TestDirFingerprint:
-    """_dir_fingerprint helper in sop.py."""
+    """_dir_fingerprint helper in skills.py."""
 
     def test_empty_dir_returns_zero_file_count(self, tmp_path):
         """Empty dir has fingerprint = 0.0 (count of 0 files)."""
@@ -451,9 +323,9 @@ class TestDirFingerprint:
         fp = _dir_fingerprint(tmp_path / "nonexistent")
         assert fp == 0.0
 
-    def test_non_md_files_ignored(self, tmp_path):
-        """Files that don't match *.md don't affect fingerprint."""
+    def test_json_files_included(self, tmp_path):
+        """JSON files (like SKILL.json) affect fingerprint."""
         fp1 = _dir_fingerprint(tmp_path)
-        (tmp_path / "readme.txt").write_text("not markdown")
+        (tmp_path / "SKILL.json").write_text("{}")
         fp2 = _dir_fingerprint(tmp_path)
-        assert fp1 == fp2
+        assert fp1 != fp2

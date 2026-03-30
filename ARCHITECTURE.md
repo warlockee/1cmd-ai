@@ -76,7 +76,7 @@ onecmd/manager/
 ├── queue.py             # Per-terminal command queue
 ├── tasks.py             # Background + smart task runners
 ├── memory.py            # Long-term memory (SQLite)
-└── sop.py               # SOP + custom rules loading
+└── skills.py            # Modular skills loading
 ```
 
 ### The Interface Boundary

@@ -159,7 +159,7 @@ def tool_restart_service(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     """Restart a system service.
 
     SAFETY: This tool always requires user confirmation unless the service
-    is pre-approved in custom_rules.md.
+    is pre-approved in skills auto-restart rules.
     """
     service_name: str = args["service_name"]
     confirmed: bool = args.get("confirmed", False)
@@ -172,20 +172,9 @@ def tool_restart_service(ctx: dict[str, Any], args: dict[str, Any]) -> str:
             f"Call this tool again with confirmed=true after user approval."
         )
 
-    # Check custom_rules.md for pre-approved services
-    from onecmd.manager.sop import ensure_sop
-    sop_content = ensure_sop()
-    auto_approved = False
-    if sop_content:
-        import re
-        # Look for lines like: "auto-restart: nginx, redis, myapp"
-        match = re.search(
-            r"auto[- ]restart\s*:\s*(.+)", sop_content, re.IGNORECASE)
-        if match:
-            approved_list = [
-                s.strip().lower() for s in match.group(1).split(",")]
-            if service_name.lower() in approved_list:
-                auto_approved = True
+    # Check skills for pre-approved services
+    from onecmd.manager.skills import get_auto_restart_services
+    auto_approved = service_name.lower() in get_auto_restart_services()
 
     os_type = _detect_os()
     if os_type == "linux":
@@ -249,7 +238,7 @@ RESTART_TOOL_SCHEMA = {
     "description": (
         "Restart a system service (systemd on Linux, brew services on macOS). "
         "ALWAYS ask the user for confirmation first unless the service is "
-        "listed in auto-restart rules in custom_rules.md. "
+        "listed in skills auto-restart rules. "
         "Set confirmed=true only after user approval."
     ),
     "input_schema": {

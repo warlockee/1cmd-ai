@@ -1,0 +1,8 @@
+{
+  "name": "core-ops",
+  "version": "1.0.0",
+  "description": "Core operational procedures for terminal management, command execution, and agent behavior.",
+  "mode": "domain",
+  "always_loaded": true,
+  "max_context_chars": 8000
+}

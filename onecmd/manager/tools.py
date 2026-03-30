@@ -474,12 +474,29 @@ def tool_send_message_to_user(ctx: dict[str, Any], args: dict[str, Any]) -> str:
     return "Message sent."
 
 
-def tool_read_sop(ctx: dict[str, Any], args: dict[str, Any]) -> str:
-    """Read the current SOP and custom rules."""
-    from onecmd.manager.sop import ensure_sop
-    content = ensure_sop()
-    if not content:
-        return "No SOP configured."
+def tool_list_skills(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """List all available skills with their status."""
+    from onecmd.manager.skills import list_skills
+    skills = list_skills()
+    if not skills:
+        return "No skills configured."
+    lines = []
+    for s in skills:
+        status = "enabled" if s.get("enabled") else "disabled"
+        loaded = " (always loaded)" if s.get("always_loaded") else ""
+        lines.append(f"- {s['name']} [{status}{loaded}]: {s.get('description', '')}")
+    return "\n".join(lines)
+
+
+def tool_read_skill(ctx: dict[str, Any], args: dict[str, Any]) -> str:
+    """Read the full content of a specific skill."""
+    from onecmd.manager.skills import load_skill
+    name = args.get("skill_name", "").strip()
+    if not name:
+        return "Error: skill_name is required."
+    content = load_skill(name)
+    if content is None:
+        return f"Skill '{name}' not found or has no content."
     return content
 
 
@@ -754,7 +771,8 @@ TOOL_REGISTRY: dict[str, ToolFunc] = {
     "save_memory": tool_save_memory,
     "delete_memory": tool_delete_memory,
     "list_memories": tool_list_memories,
-    "read_sop": tool_read_sop,
+    "list_skills": tool_list_skills,
+    "read_skill": tool_read_skill,
     "send_message_to_user": tool_send_message_to_user,
     "spawn_role": tool_spawn_role,
     "schedule_job": tool_schedule_job,
@@ -867,10 +885,16 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
      "description": "List all saved memories for this user. Use when the user asks "
         "'what do you remember', 'show my memories', or 'what's in your memory'.",
      "input_schema": _schema()},
-    {"name": "read_sop",
-     "description": "Read the current SOP (Standard Operating Procedure) and custom rules. "
-        "Use when the user asks about rules, SOP, configuration, or how you're configured.",
+    {"name": "list_skills",
+     "description": "List all available skills with their status (enabled/disabled, always-loaded). "
+        "Use when the user asks about skills, rules, configuration, or how you're configured.",
      "input_schema": _schema()},
+    {"name": "read_skill",
+     "description": "Read the full content of a specific skill. Use to load on-demand skills "
+        "listed in AVAILABLE SKILLS, or to review any skill's detailed content.",
+     "input_schema": _schema(
+         _props(skill_name="Name of the skill to read (e.g. 'core-ops')"),
+         ["skill_name"])},
     {"name": "send_message_to_user",
      "description": "Send a message to the user immediately, without waiting for the final response. "
         "Use this to deliver results one by one (e.g. when summarizing multiple terminals, "
@@ -910,7 +934,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {"name": "restart_service",
      "description": "Restart a system service (systemd on Linux, brew services on macOS). "
         "ALWAYS ask the user for confirmation first unless the service is in the auto-restart list "
-        "in custom_rules.md. Set confirmed=true only after user approval.",
+        "in the skills auto-restart rules. Set confirmed=true only after user approval.",
      "input_schema": _schema(
          {"service_name": {"type": "string",
                            "description": "Name of the service to restart (e.g. 'nginx', 'redis')"},

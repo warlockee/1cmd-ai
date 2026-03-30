@@ -80,11 +80,13 @@ ONECMD_MGR_PROVIDER=openai-codex onecmd --apikey YOUR_BOT_TOKEN
 
 Auto-detection priority: Gemini > Claude > Codex. Override with `ONECMD_MGR_PROVIDER` or `ONECMD_MGR_MODEL`.
 
-### Standard Operating Procedure
+### Skills
 
-On first run, the manager copies the default SOP to `.onecmd/agent_sop.md`. This file guides the AI on decision-making and stuck terminal recovery.
+On first run, the manager seeds `.onecmd/skills/` with the default `core-ops` skill, which provides operational guidance for terminal management and command execution.
 
-To add your own rules, create `.onecmd/custom_rules.md`:
+Skills are modular — each is a directory under `.onecmd/skills/` with a `SKILL.json` metadata file and a `resources/` folder of `.md` context files. Enable/disable skills via `.onecmd/skills/skills.json`.
+
+To add custom rules, edit `.onecmd/skills/core-ops/resources/custom-rules.md`:
 
 ```markdown
 - Always run tests before deploying
@@ -92,7 +94,7 @@ To add your own rules, create `.onecmd/custom_rules.md`:
 - Prefer yarn over npm
 ```
 
-Custom rules are appended to the default SOP automatically — no need to edit the base file.
+To create a new skill, copy the `new-skill` template and edit `SKILL.json`.
 
 ### Manager commands
 

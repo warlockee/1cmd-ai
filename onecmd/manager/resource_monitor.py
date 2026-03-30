@@ -4,7 +4,7 @@ Runs a background thread that periodically checks system resources
 and sends notifications when thresholds are exceeded.
 
 Calling spec:
-  Inputs:  notify_fn, config (thresholds from SOP/custom_rules)
+  Inputs:  notify_fn, config (thresholds from skills/custom_rules)
   Outputs: ResourceAlert objects
   Side effects: sends notifications via notify_fn when thresholds exceeded
 

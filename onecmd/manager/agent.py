@@ -38,7 +38,7 @@ from typing import Any, Callable
 
 from onecmd.manager import memory
 from onecmd.manager.llm import ProviderManager
-from onecmd.manager.sop import ensure_sop
+from onecmd.manager.skills import ensure_skills
 from onecmd.manager.tasks import _next_task_id
 from onecmd.manager.tools import TOOL_SCHEMAS, dispatch
 
@@ -130,10 +130,10 @@ _MAX_PROMPT_MEMORIES: int = 30  # only include N most recent in system prompt
 def _build_system_prompt(
     memories: list[tuple[int, str, str]] | None = None,
     summary: str | None = None,
-    sop: str = "",
+    skills_context: str = "",
     base_override: str | None = None,
 ) -> str:
-    """Assemble the full system prompt from base + memories + summary + SOP."""
+    """Assemble the full system prompt from base + memories + summary + skills."""
     prompt = base_override if base_override else _load_system_prompt()
     if memories:
         total = len(memories)
@@ -147,8 +147,8 @@ def _build_system_prompt(
             prompt += f"\n- [#{mid}] ({category}) {content}"
     if summary:
         prompt += "\n\nCONVERSATION SUMMARY (older context):\n" + summary
-    if sop:
-        prompt += "\n\n" + sop
+    if skills_context:
+        prompt += "\n\n" + skills_context
     return prompt
 
 
@@ -385,12 +385,12 @@ class Agent:
         # Summarize older messages if conversation is getting long
         self._maybe_summarize(chat_id, conv)
 
-        # Build system prompt with memories, summary, SOP
+        # Build system prompt with memories, summary, skills
         memories = memory.list_for_chat(chat_id)
         chat_summary = self._summaries.get(chat_id)
-        sop = ensure_sop()
+        skills_ctx = ensure_skills()
         system_prompt = _build_system_prompt(
-            memories, chat_summary, sop,
+            memories, chat_summary, skills_ctx,
             base_override=self._system_prompt_override,
         )
         if memories:

@@ -45,7 +45,7 @@ class Config(BaseModel, extra="forbid"):
     otp_timeout: int = Field(default=300, ge=30, le=28800, description="OTP timeout seconds")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
     google_api_key: str | None = Field(default=None, description="Google API key")
-    admin_port: int | None = Field(default=None, ge=1024, le=65535, description="Port for admin panel (None = disabled)")
+    admin_port: int | None = Field(default=8080, ge=1024, le=65535, description="Port for admin panel (None = disabled)")
     admin_password: str | None = Field(default=None, description="Admin panel password")
     slack_bot_token: str | None = Field(default=None, description="Slack Bot User OAuth Token")
     slack_app_token: str | None = Field(default=None, description="Slack App-Level Token for Socket Mode")
@@ -183,6 +183,16 @@ def parse_config(argv: list[str] | None = None) -> Config:
             pass
 
     split_messages = _parse_bool_env("ONECMD_SPLIT_MESSAGES")
+
+    # Admin port: CLI flag > env var > default (8080)
+    admin_port_env = os.environ.get("ONECMD_ADMIN_PORT")
+    if admin_port is None and admin_port_env is not None:
+        try:
+            admin_port = int(admin_port_env) if admin_port_env else None
+        except ValueError:
+            pass
+    if admin_port is None:
+        admin_port = 8080
 
     admin_password = os.environ.get("ONECMD_ADMIN_PASSWORD") or None
 
