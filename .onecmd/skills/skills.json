@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "new-skill",
+      "enabled": true,
+      "slash": true,
+      "description": "Bootstrap a new skill scaffold."
+    }
+  ]
+}

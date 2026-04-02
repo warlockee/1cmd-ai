@@ -337,7 +337,22 @@ if [[ -z "$HAS_LLM" ]]; then
     warn "No LLM credentials provided. AI manager will be unavailable."
 fi
 
-# Step 6: Accessibility permission check (macOS only)
+# Step 6: Agent mode selection
+echo ""
+echo -e "${BOLD}Agent Mode${NC}"
+echo ""
+echo "  1) legacy mode (SOP + tools)"
+echo "  2) skills mode (skills registry + /reload workflow)"
+echo ""
+read -p "  Choose [1/2] (default 1): " -n 1 -r AGENT_MODE_CHOICE
+echo ""
+
+ONECMD_AGENT_MODE="legacy"
+if [[ "$AGENT_MODE_CHOICE" == "2" ]]; then
+    ONECMD_AGENT_MODE="skills"
+fi
+
+# Step 7: Accessibility permission check (macOS only)
 if [[ "$OS" == "Darwin" ]]; then
     echo ""
     info "Checking Accessibility permission..."
@@ -353,11 +368,13 @@ if [[ "$OS" == "Darwin" ]]; then
     echo ""
 fi
 
-# Step 7: Create .env and launch script
+# Step 8: Create .env and launch script
 ENV_FILE=".env"
 {
     echo "# OneCmd environment — keep this file private"
     echo "TELEGRAM_BOT_TOKEN=$(tr -d '[:space:]' < apikey.txt)"
+    echo "ONECMD_AGENT_MODE=$ONECMD_AGENT_MODE"
+    echo "ONECMD_SKILLS_DIR=.onecmd/skills"
     [[ -n "$GOOGLE_KEY" ]] && echo "GOOGLE_API_KEY=$GOOGLE_KEY"
     [[ -n "$ANTHROPIC_KEY" ]] && echo "ANTHROPIC_API_KEY=$ANTHROPIC_KEY"
     [[ -n "$MGR_PROVIDER" ]] && echo "ONECMD_MGR_PROVIDER=$MGR_PROVIDER"
@@ -379,7 +396,7 @@ RUNEOF
 chmod +x run.sh
 ok "Created run.sh"
 
-# Step 8: Linux tmux reminder
+# Step 9: Linux tmux reminder
 if [[ "$OS" == "Linux" ]]; then
     echo ""
     echo -e "  ${YELLOW}Important:${NC} On Linux, onecmd controls tmux sessions."
@@ -390,7 +407,7 @@ if [[ "$OS" == "Linux" ]]; then
     echo "    tmux new -s server -d    # start detached"
 fi
 
-# Step 9: Summary
+# Step 10: Summary
 echo ""
 echo -e "${GREEN}${BOLD}Setup complete!${NC}"
 echo ""
@@ -400,6 +417,12 @@ echo -e "    ${BOLD}cd $SCRIPT_DIR && ./run.sh${NC}"
 echo ""
 echo "  Then open Telegram and message your bot."
 echo "  The first user to message becomes the owner."
+if [[ "$ONECMD_AGENT_MODE" == "skills" ]]; then
+    echo ""
+    echo "  Skills mode:"
+    echo "    Run /reload in Telegram after startup."
+    echo "    Bootstrap skill path: .onecmd/skills/new-skill"
+fi
 echo ""
 echo "  Bot commands:"
 echo "    .list    - List terminal sessions"

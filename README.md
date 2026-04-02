@@ -173,6 +173,9 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `--dbfile <path>` | Custom database path (default: `./mybot.sqlite`) |
 | `--dangerously-attach-to-any-window` | Show all windows, not just terminals (macOS only) |
 | `--verbose` | Enable debug logging |
+| `--agent-mode <legacy\|skills>` | Choose orchestration mode (default: legacy). `skills` uses only skill tools (`list_skills`, `run_skill`) and does not run legacy SOP+tools together. |
+| `--skills-dir <path>` | Skill JSON directory for skills mode (default: `.onecmd/skills`) |
+| `--skills-max-steps <N>` | Max steps per skill execution (default: 20) |
 
 ### Environment Variables
 
@@ -188,6 +191,25 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `OPENAI_CODEX_TOKEN_URL` | `https://auth.openai.com/oauth/token` | Refresh endpoint for Codex OAuth tokens |
 | `ONECMD_VISIBLE_LINES` | `40` | Number of terminal lines to include in output |
 | `ONECMD_SPLIT_MESSAGES` | off | Set to `1` to split long output across multiple messages |
+| `ONECMD_AGENT_MODE` | `legacy` | Agent mode switch: `legacy` or `skills` |
+| `ONECMD_SKILLS_DIR` | `.onecmd/skills` | Directory containing `*.json` skill workflows |
+
+### Bootstrap Skill Workflow
+
+Skills mode can start with only the bootstrap skill at `.onecmd/skills/new-skill`.
+
+Register skills in `.onecmd/skills/skills.json`, then run `/reload` in Telegram to regenerate slash commands from the current registry.
+
+`SKILL.json` now supports bounded runtime policy fields in addition to legacy `steps[]` workflows:
+
+- `mode`: `domain` or `capability` (`domain` by default)
+- `max_rounds`: bounded LLM loop limit, default `3` for domain skills
+- `max_steps`: optional hard cap, still constrained by global `--skills-max-steps`
+- `failure_policy`: `stop_and_report` or `fallback` (`stop_and_report` by default)
+- `resources[]`: optional structured read-only context entries
+- `scripts[]`: optional structured executable helper entries
+
+Legacy skills that only define `steps[]` continue to work. Domain skills stop and report when they exhaust their configured bounds instead of forcing more execution.
 
 Terminal output is sent as a single message by default. Each new command or refresh **deletes the previous output messages** and sends fresh ones, creating a clean "live terminal" view rather than spamming the chat.
 

@@ -279,11 +279,15 @@ class Agent:
         config: Any,
         notify_fn: NotifyFn,
         system_prompt_override: str | None = None,
+        tool_schemas: list[dict[str, Any]] | None = None,
+        dispatch_fn: Callable[[str, dict[str, Any], dict[str, Any]], str] | None = None,
     ) -> None:
         self._backend = backend
         self._config = config
         self._notify = notify_fn
         self._system_prompt_override = system_prompt_override
+        self._tool_schemas = tool_schemas if tool_schemas is not None else TOOL_SCHEMAS
+        self._dispatch_fn = dispatch_fn if dispatch_fn is not None else dispatch
         self.debug = False
 
         # Provider manager handles LLM creation + fallback
@@ -424,7 +428,7 @@ class Agent:
 
                 try:
                     serialized, text_parts, tool_uses, stop = provider.chat(
-                        model, system_prompt, TOOL_SCHEMAS, conv,
+                        model, system_prompt, self._tool_schemas, conv,
                         max_tokens=provider.default_max_tokens)
                 except Exception as api_err:
                     if not _is_retriable_error(api_err):
@@ -443,7 +447,7 @@ class Agent:
                     self._notify(chat_id, f"Switched to {prev_name} ({reason}).")
                     serialized, text_parts, tool_uses, stop = \
                         provider.chat(model, system_prompt,
-                                      TOOL_SCHEMAS, conv,
+                                      self._tool_schemas, conv,
                                       max_tokens=provider.default_max_tokens)
 
                 conv.append({"role": "assistant", "content": serialized})
@@ -459,7 +463,7 @@ class Agent:
                             len(tool_uses), [tu[1] for tu in tool_uses])
                 results: list[tuple[str, str, str]] = []
                 for tu_id, tu_name, tu_args in tool_uses:
-                    result = dispatch(tu_name, tu_args, ctx)
+                    result = self._dispatch_fn(tu_name, tu_args, ctx)
                     results.append((tu_id, tu_name, result))
 
                 conv.append(provider.format_tool_results(results))
@@ -513,6 +517,10 @@ class Agent:
             "chat_fn": chat_fn,
             "format_results_fn": provider.format_tool_results,
             "next_task_id": _next_task_id,
+            "dispatch_fn": self._dispatch_fn,
+            "skills_enabled": getattr(self._config, "agent_mode", "legacy") == "skills",
+            "skills_dir": getattr(self._config, "skills_dir", ".onecmd/skills"),
+            "skills_max_steps": getattr(self._config, "skills_max_steps", 20),
         }
 
     # -- summarization ------------------------------------------------------
