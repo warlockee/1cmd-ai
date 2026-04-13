@@ -48,11 +48,26 @@ def html_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _truncate(text: str) -> str:
-    """Truncate text to Telegram's 4096-char limit, adding '...' if truncated."""
+def _split(text: str) -> list[str]:
+    """Split text into chunks no larger than Telegram's 4096-char limit.
+
+    Prefers breaking on line boundaries, then spaces, then hard cuts.
+    """
     if len(text) <= MAX_TEXT_LENGTH:
-        return text
-    return text[: MAX_TEXT_LENGTH - 3] + "..."
+        return [text] if text else [""]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > MAX_TEXT_LENGTH:
+        cut = remaining.rfind("\n", 0, MAX_TEXT_LENGTH)
+        if cut <= 0:
+            cut = remaining.rfind(" ", 0, MAX_TEXT_LENGTH)
+        if cut <= 0:
+            cut = MAX_TEXT_LENGTH
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip("\n") if remaining[cut:cut+1] == "\n" else remaining[cut:]
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def _validate_chat_id(chat_id: int) -> int:
@@ -67,25 +82,45 @@ async def send_message(
     chat_id: int,
     text: str,
     reply_markup: object | None = None,
-    parse_mode: str = "HTML",
+    parse_mode: str | None = "HTML",
 ) -> int | None:
-    """Send a message via Telegram. Returns message_id or None on failure."""
-    try:
-        _validate_chat_id(chat_id)
-        text = _truncate(text)
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            parse_mode=parse_mode,
-            reply_markup=reply_markup,
-            disable_web_page_preview=True,
-        )
-        return msg.message_id
-    except TypeError:
-        raise
-    except TelegramError as exc:
-        logger.error("send_message failed chat_id=%s: %s", chat_id, exc)
-        return None
+    """Send a message via Telegram. Returns last message_id or None on failure.
+
+    Long text is split into Telegram-sized chunks. The reply_markup is only
+    attached to the final chunk. If HTML parsing fails for a chunk, it is
+    retried as plain text so content is still delivered.
+    """
+    _validate_chat_id(chat_id)
+    chunks = _split(text)
+    last_id: int | None = None
+    for i, chunk in enumerate(chunks):
+        is_last = i == len(chunks) - 1
+        try:
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=chunk,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup if is_last else None,
+                disable_web_page_preview=True,
+            )
+            last_id = msg.message_id
+        except TelegramError as exc:
+            logger.warning(
+                "send_message HTML failed chat_id=%s, retrying as plain: %s",
+                chat_id, exc)
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    parse_mode=None,
+                    reply_markup=reply_markup if is_last else None,
+                    disable_web_page_preview=True,
+                )
+                last_id = msg.message_id
+            except TelegramError as exc2:
+                logger.error(
+                    "send_message failed chat_id=%s: %s", chat_id, exc2)
+    return last_id
 
 
 async def edit_message(
@@ -93,27 +128,46 @@ async def edit_message(
     chat_id: int,
     msg_id: int,
     text: str,
-    parse_mode: str = "HTML",
+    parse_mode: str | None = "HTML",
 ) -> bool:
-    """Edit an existing message. Returns True on success, False on failure."""
+    """Edit an existing message. Returns True on success, False on failure.
+
+    If text exceeds Telegram's limit, the first chunk replaces the original
+    message and remaining chunks are sent as new messages.
+    """
+    _validate_chat_id(chat_id)
+    chunks = _split(text)
+    first = chunks[0]
+    ok = False
     try:
-        _validate_chat_id(chat_id)
-        text = _truncate(text)
         await bot.edit_message_text(
             chat_id=chat_id,
             message_id=msg_id,
-            text=text,
+            text=first,
             parse_mode=parse_mode,
             disable_web_page_preview=True,
         )
-        return True
-    except TypeError:
-        raise
+        ok = True
     except TelegramError as exc:
-        logger.error(
-            "edit_message failed chat_id=%s msg_id=%s: %s", chat_id, msg_id, exc
-        )
-        return False
+        logger.warning(
+            "edit_message HTML failed chat_id=%s msg_id=%s, retrying as plain: %s",
+            chat_id, msg_id, exc)
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_id,
+                text=first,
+                parse_mode=None,
+                disable_web_page_preview=True,
+            )
+            ok = True
+        except TelegramError as exc2:
+            logger.error(
+                "edit_message failed chat_id=%s msg_id=%s: %s",
+                chat_id, msg_id, exc2)
+    for chunk in chunks[1:]:
+        await send_message(bot, chat_id, chunk, parse_mode=parse_mode)
+    return ok
 
 
 async def delete_message(bot: Bot, chat_id: int, msg_id: int) -> bool:

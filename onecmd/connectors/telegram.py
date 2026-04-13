@@ -39,10 +39,26 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_LENGTH = 4096
 
 
-def _truncate(text: str) -> str:
+def _split(text: str) -> list[str]:
+    """Split text into chunks no larger than Telegram's 4096-char limit.
+
+    Prefers breaking on line boundaries, then spaces, then hard cuts.
+    """
     if len(text) <= MAX_TEXT_LENGTH:
-        return text
-    return text[: MAX_TEXT_LENGTH - 3] + "..."
+        return [text] if text else [""]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > MAX_TEXT_LENGTH:
+        cut = remaining.rfind("\n", 0, MAX_TEXT_LENGTH)
+        if cut <= 0:
+            cut = remaining.rfind(" ", 0, MAX_TEXT_LENGTH)
+        if cut <= 0:
+            cut = MAX_TEXT_LENGTH
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:].lstrip("\n") if remaining[cut:cut+1] == "\n" else remaining[cut:]
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 class TelegramConnector(Connector):
@@ -121,38 +137,78 @@ class TelegramConnector(Connector):
             await self._app.shutdown()
 
     async def send_message(self, chat_id: str, text: str, **kwargs: Any) -> str:
-        """Send a message.  Returns message ID as string."""
+        """Send a message.  Returns the last sent message ID as string.
+
+        Long text is split into Telegram-sized chunks. The reply_markup is
+        only attached to the final chunk. If HTML parsing fails for a chunk
+        (e.g. unbalanced tags from AI-generated markdown), it is retried as
+        plain text so the user still receives the content.
+        """
         if self._bot is None:
             raise RuntimeError("Connector not started")
-        try:
-            text = _truncate(text)
-            msg = await self._bot.send_message(
-                chat_id=int(chat_id),
-                text=text,
-                parse_mode=kwargs.get("parse_mode", "HTML"),
-                reply_markup=kwargs.get("reply_markup"),
-                disable_web_page_preview=True,
-            )
-            return str(msg.message_id)
-        except TelegramError as exc:
-            logger.error("send_message failed chat_id=%s: %s", chat_id, exc)
-            return ""
+        parse_mode = kwargs.get("parse_mode", "HTML")
+        reply_markup = kwargs.get("reply_markup")
+        chunks = _split(text)
+        last_id = ""
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            try:
+                msg = await self._bot.send_message(
+                    chat_id=int(chat_id),
+                    text=chunk,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup if is_last else None,
+                    disable_web_page_preview=True,
+                )
+                last_id = str(msg.message_id)
+            except TelegramError as exc:
+                logger.warning(
+                    "send_message HTML failed chat_id=%s, retrying as plain: %s",
+                    chat_id, exc)
+                try:
+                    msg = await self._bot.send_message(
+                        chat_id=int(chat_id),
+                        text=chunk,
+                        parse_mode=None,
+                        reply_markup=reply_markup if is_last else None,
+                        disable_web_page_preview=True,
+                    )
+                    last_id = str(msg.message_id)
+                except TelegramError as exc2:
+                    logger.error(
+                        "send_message failed chat_id=%s: %s", chat_id, exc2)
+        return last_id
 
     async def edit_message(self, chat_id: str, message_id: str,
                            text: str, **kwargs: Any) -> None:
         if self._bot is None:
             return
+        parse_mode = kwargs.get("parse_mode", "HTML")
+        chunks = _split(text)
+        first = chunks[0]
         try:
-            text = _truncate(text)
             await self._bot.edit_message_text(
                 chat_id=int(chat_id),
                 message_id=int(message_id),
-                text=text,
-                parse_mode=kwargs.get("parse_mode", "HTML"),
+                text=first,
+                parse_mode=parse_mode,
                 disable_web_page_preview=True,
             )
         except TelegramError as exc:
-            logger.error("edit_message failed: %s", exc)
+            logger.warning(
+                "edit_message HTML failed, retrying as plain: %s", exc)
+            try:
+                await self._bot.edit_message_text(
+                    chat_id=int(chat_id),
+                    message_id=int(message_id),
+                    text=first,
+                    parse_mode=None,
+                    disable_web_page_preview=True,
+                )
+            except TelegramError as exc2:
+                logger.error("edit_message failed: %s", exc2)
+        for chunk in chunks[1:]:
+            await self.send_message(chat_id, chunk, parse_mode=parse_mode)
 
     async def delete_message(self, chat_id: str, message_id: str) -> None:
         if self._bot is None:

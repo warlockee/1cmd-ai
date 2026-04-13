@@ -13,7 +13,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from onecmd.connectors.base import Connector
-from onecmd.connectors.telegram import TelegramConnector, _truncate as tg_truncate
+from onecmd.connectors.telegram import TelegramConnector, _split as tg_split
 from onecmd.connectors.slack import _html_to_slack, _truncate as slack_truncate
 
 
@@ -49,18 +49,25 @@ class TestTelegramConnector:
         c = TelegramConnector(token="test-token")
         assert c.platform_name == "telegram"
 
-    def test_truncate_short(self):
-        assert tg_truncate("hello") == "hello"
+    def test_split_short(self):
+        assert tg_split("hello") == ["hello"]
 
-    def test_truncate_long(self):
+    def test_split_long_no_content_loss(self):
         text = "x" * 5000
-        result = tg_truncate(text)
-        assert len(result) == 4096
-        assert result.endswith("...")
+        chunks = tg_split(text)
+        assert len(chunks) >= 2
+        assert all(len(c) <= 4096 for c in chunks)
+        assert "".join(chunks) == text
 
-    def test_truncate_at_limit(self):
+    def test_split_at_limit(self):
         text = "x" * 4096
-        assert tg_truncate(text) == text
+        assert tg_split(text) == [text]
+
+    def test_split_prefers_newline_boundary(self):
+        text = ("a" * 4000) + "\n" + ("b" * 2000)
+        chunks = tg_split(text)
+        assert chunks[0] == "a" * 4000
+        assert chunks[1] == "b" * 2000
 
 
 # ---------------------------------------------------------------------------

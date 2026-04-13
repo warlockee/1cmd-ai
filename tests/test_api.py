@@ -76,21 +76,36 @@ class TestSendMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_truncates_long_text(self):
+    async def test_long_text_split_no_content_loss(self):
         bot = self._make_bot()
         long_text = "x" * (MAX_TEXT_LENGTH + 100)
         await send_message(bot, 123, long_text)
-        actual_text = bot.send_message.call_args.kwargs["text"]
-        assert len(actual_text) == MAX_TEXT_LENGTH
-        assert actual_text.endswith("...")
+        assert bot.send_message.await_count >= 2
+        sent = "".join(
+            call.kwargs["text"] for call in bot.send_message.await_args_list)
+        assert sent == long_text
+        for call in bot.send_message.await_args_list:
+            assert len(call.kwargs["text"]) <= MAX_TEXT_LENGTH
 
     @pytest.mark.asyncio
-    async def test_text_at_limit_not_truncated(self):
+    async def test_text_at_limit_single_message(self):
         bot = self._make_bot()
         text = "x" * MAX_TEXT_LENGTH
         await send_message(bot, 123, text)
-        actual_text = bot.send_message.call_args.kwargs["text"]
-        assert actual_text == text
+        bot.send_message.assert_awaited_once()
+        assert bot.send_message.call_args.kwargs["text"] == text
+
+    @pytest.mark.asyncio
+    async def test_html_failure_falls_back_to_plain(self):
+        bot = MagicMock()
+        good_msg = MagicMock()
+        type(good_msg).message_id = PropertyMock(return_value=42)
+        bot.send_message = AsyncMock(
+            side_effect=[TelegramError("can't parse entities"), good_msg])
+        result = await send_message(bot, 123, "<broken")
+        assert result == 42
+        assert bot.send_message.await_count == 2
+        assert bot.send_message.await_args_list[1].kwargs["parse_mode"] is None
 
     @pytest.mark.asyncio
     async def test_telegram_error_returns_none(self):
@@ -138,14 +153,22 @@ class TestEditMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_truncates_long_text(self):
+    async def test_long_text_edits_first_chunk_and_sends_rest(self):
         bot = MagicMock()
         bot.edit_message_text = AsyncMock()
+        sent_msg = MagicMock()
+        type(sent_msg).message_id = PropertyMock(return_value=999)
+        bot.send_message = AsyncMock(return_value=sent_msg)
         long_text = "y" * (MAX_TEXT_LENGTH + 50)
-        await edit_message(bot, 123, 456, long_text)
-        actual_text = bot.edit_message_text.call_args.kwargs["text"]
-        assert len(actual_text) == MAX_TEXT_LENGTH
-        assert actual_text.endswith("...")
+        result = await edit_message(bot, 123, 456, long_text)
+        assert result is True
+        bot.edit_message_text.assert_awaited_once()
+        first_chunk = bot.edit_message_text.call_args.kwargs["text"]
+        assert len(first_chunk) <= MAX_TEXT_LENGTH
+        assert bot.send_message.await_count >= 1
+        delivered = first_chunk + "".join(
+            call.kwargs["text"] for call in bot.send_message.await_args_list)
+        assert delivered == long_text
 
     @pytest.mark.asyncio
     async def test_telegram_error_returns_false(self):
