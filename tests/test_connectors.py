@@ -134,6 +134,9 @@ class _FakeBackend:
     def create(self):
         return "new-id"
 
+    def diagnostic(self):
+        return ""
+
 
 class _FakeTermInfo:
     def __init__(self, id, name="term", title="", pid=1):

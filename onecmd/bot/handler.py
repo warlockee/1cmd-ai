@@ -95,16 +95,24 @@ def _save_alias(term_id: str, name: str) -> None:
 
 # -- Helpers ---------------------------------------------------------------
 
-def _build_list_text(terminals: list[TermInfo], connected_id: str = "") -> str:
+def _build_list_text(
+    terminals: list[TermInfo],
+    connected_id: str = "",
+    diagnostic: str = "",
+) -> str:
     if not terminals:
         import sys
         if sys.platform != "darwin":
-            return (
+            msg = (
                 "No terminal sessions found.\n\n"
                 "On Linux, onecmd controls tmux sessions.\n"
                 "Start one with: <code>tmux new -s dev</code>"
             )
-        return "No terminal sessions found."
+        else:
+            msg = "No terminal sessions found."
+        if diagnostic:
+            msg += f"\n<i>{html_escape(diagnostic)}</i>"
+        return msg
     lines = [f"<b>Terminals</b> ({len(terminals)})"]
     aliases = _load_aliases()
     for i, t in enumerate(terminals, 1):
@@ -133,7 +141,10 @@ async def _show_terminal(bot, chat_id, term_id, s, backend, config):
 async def _show_closed(bot, chat_id, s, backend):
     _disconnect(s)
     terminals = backend.list()
-    await send_message(bot, chat_id, "Window closed.\n\n" + _build_list_text(terminals, ""))
+    await send_message(
+        bot, chat_id,
+        "Window closed.\n\n"
+        + _build_list_text(terminals, "", backend.diagnostic()))
 
 
 def _build_status_text(s: _State, router=None) -> str:
@@ -250,7 +261,9 @@ async def _cmd_list(bot, chat_id, _text, s, backend, _store, _config, router=Non
     await delete_tracked_messages(bot, chat_id, s.tracked_msgs)
     was_connected = s.connected
     _disconnect(s)
-    await send_message(bot, chat_id, _build_list_text(backend.list()))
+    await send_message(
+        bot, chat_id,
+        _build_list_text(backend.list(), "", backend.diagnostic()))
     if was_connected:
         await _update_status(bot, chat_id, s, router)
 
@@ -331,6 +344,39 @@ async def _cmd_help(bot, chat_id, _text, _s, _backend, _store, _config):
     await send_message(bot, chat_id, HELP_TEXT)
 
 
+async def _cmd_danger(bot, chat_id, text, s, backend, _store, _config,
+                      router=None):
+    parts = text.split(None, 1)
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    if arg in ("on", "true", "1"):
+        was_connected = s.connected
+        _disconnect(s)
+        backend.set_danger_mode(True)
+        await send_message(
+            bot, chat_id,
+            "⚠️ danger_mode <b>ON</b> — bot can now reach every "
+            "terminal on this machine.\n\n"
+            + _build_list_text(backend.list(), "", backend.diagnostic()))
+        if was_connected:
+            await _update_status(bot, chat_id, s, router)
+    elif arg in ("off", "false", "0"):
+        was_connected = s.connected
+        _disconnect(s)
+        backend.set_danger_mode(False)
+        await send_message(
+            bot, chat_id,
+            "danger_mode <b>OFF</b>.\n\n"
+            + _build_list_text(backend.list(), "", backend.diagnostic()))
+        if was_connected:
+            await _update_status(bot, chat_id, s, router)
+    else:
+        state = "ON" if backend.is_danger_mode() else "OFF"
+        await send_message(
+            bot, chat_id,
+            f"danger_mode is <b>{state}</b>.\n"
+            "Usage: <code>.danger on</code> | <code>.danger off</code>")
+
+
 async def _cmd_health(bot, chat_id, _text, s, backend, _store, config, router=None):
     up = int(time.time() - _START_TIME)
     h, r = divmod(up, 3600)
@@ -374,7 +420,8 @@ async def _cmd_new(bot, chat_id, _text, s, backend, _store, _config):
     await asyncio.sleep(1.0)
     terminals = backend.list()
     await send_message(bot, chat_id,
-        "\u2705 Terminal created.\n\n" + _build_list_text(terminals))
+        "\u2705 Terminal created.\n\n"
+        + _build_list_text(terminals, "", backend.diagnostic()))
 
 
 async def _cmd_rename(bot, chat_id, text, _s, backend, _store, _config):
@@ -506,6 +553,7 @@ COMMANDS: dict[str, CmdFn] = {
     ".debug": _cmd_debug,
     ".exit": _cmd_exit,
     ".help": _cmd_help,
+    ".danger": _cmd_danger,
     ".health": _cmd_health,
     ".rename": _cmd_rename,
     ".model": _cmd_model,
@@ -595,7 +643,8 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
         if just_reg:
             terminals = backend.list()
             welcome = build_welcome_message(
-                len(terminals), _build_list_text(terminals))
+                len(terminals),
+                _build_list_text(terminals, "", backend.diagnostic()))
             await send_message(bot, chat_id, welcome)
             # Create and pin the status message immediately
             status_text = _build_status_text(s)
@@ -614,7 +663,8 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
         if text.startswith("/start"):
             terminals = backend.list()
             await send_message(bot, chat_id,
-                "\U0001f4bb <b>OneCmd</b>\n\n" + _build_list_text(terminals))
+                "\U0001f4bb <b>OneCmd</b>\n\n"
+                + _build_list_text(terminals, "", backend.diagnostic()))
             return
 
         # 2. TOTP auth -- HARD GATE
@@ -749,7 +799,9 @@ def create_handler(config: Config, store: Store, backend: ValidatedBackend):
 
         # 8. Default: show terminal list
         if not need_display:
-            await send_message(bot, chat_id, _build_list_text(backend.list()))
+            await send_message(
+                bot, chat_id,
+                _build_list_text(backend.list(), "", backend.diagnostic()))
             return
 
         # Post-keystroke: sleep then show terminal output

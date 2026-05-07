@@ -18,6 +18,7 @@ HELP_TEXT = (
     "<code>.exit</code> — leave manager/CEO mode\n"
     "<code>.debug</code> — toggle verbose smart task output\n"
     "<code>.health</code> — health report\n"
+    "<code>.danger on|off</code> — widen scope to all terminals\n"
     "<code>.help</code> — this help\n\n"
     "<b>Once connected</b>, text is sent as keystrokes.\n"
     "Enter is auto-appended; end with \U0001f49c to suppress.\n\n"

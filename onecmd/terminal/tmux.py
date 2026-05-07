@@ -65,21 +65,42 @@ class TmuxBackend:
     session_name:
         If given, ``list()`` is scoped to panes within that tmux session.
         If ``None``, all panes across all sessions are returned.
+    self_pane_id:
+        The pane id this process is running in. Filtered out of ``list()``
+        so the agent does not see (or attempt to drive) itself.
+    danger_mode:
+        If True, list panes across the entire tmux server (``-a``) and do
+        not filter self. Mirrors the macOS backend's danger_mode.
     """
 
-    def __init__(self, session_name: str | None = None) -> None:
+    def __init__(
+        self,
+        session_name: str | None = None,
+        self_pane_id: str | None = None,
+        danger_mode: bool = False,
+    ) -> None:
         self._session_name = session_name
+        self._self_pane_id = self_pane_id
+        self._danger_mode = danger_mode
         self._panes: list[TermInfo] = []
+        # Set on every list() call so diagnostic() reflects the latest state
+        self._last_raw_count = 0
 
     # ------------------------------------------------------------------
     # list
     # ------------------------------------------------------------------
 
     def list(self) -> list[TermInfo]:
-        """Return all visible tmux panes (scoped if session_name was given)."""
+        """Return tmux panes in scope, with the agent's own pane filtered out.
+
+        Scope:
+          - danger_mode=True       => all panes on the tmux server (``-a``)
+          - session_name set       => panes within that session (``-s -t``)
+          - otherwise              => all panes (``-a``)
+        """
         cmd: list[str] = ["tmux", "list-panes"]
 
-        if self._session_name is not None:
+        if not self._danger_mode and self._session_name is not None:
             cmd += ["-s", "-t", self._session_name]
         else:
             cmd.append("-a")
@@ -89,9 +110,11 @@ class TmuxBackend:
         result = _run(cmd)
         if result is None:
             self._panes = []
+            self._last_raw_count = 0
             return []
 
         panes: list[TermInfo] = []
+        raw_count = 0
         for line in result.splitlines():
             if not line:
                 continue
@@ -103,10 +126,53 @@ class TmuxBackend:
                 pid = int(pid_str)
             except ValueError:
                 continue
+            raw_count += 1
+            # Hide the agent's own pane unless danger_mode is set
+            if not self._danger_mode and pane_id == self._self_pane_id:
+                continue
             panes.append(TermInfo(id=pane_id, pid=pid, name=name, title=title))
 
         self._panes = panes
+        self._last_raw_count = raw_count
         return list(panes)
+
+    # ------------------------------------------------------------------
+    # danger_mode runtime toggle
+    # ------------------------------------------------------------------
+
+    def set_danger_mode(self, enabled: bool) -> None:
+        """Toggle danger_mode at runtime; resets cached state."""
+        self._danger_mode = bool(enabled)
+        self._panes = []
+        self._last_raw_count = 0
+
+    def is_danger_mode(self) -> bool:
+        return self._danger_mode
+
+    # ------------------------------------------------------------------
+    # diagnostic
+    # ------------------------------------------------------------------
+
+    def diagnostic(self) -> str:
+        """Human-readable explanation of why ``list()`` returned what it did.
+
+        Intended for surfacing in UIs when the list is empty or unexpectedly
+        short ("you only see one terminal because...").
+        """
+        parts: list[str] = []
+        if self._danger_mode:
+            parts.append("tmux scope: entire server (danger_mode)")
+        elif self._session_name is not None:
+            parts.append(f"tmux scope: session '{self._session_name}' only")
+            parts.append("→ open more panes/windows in this session, or set "
+                         "danger_mode=true to see other tmux sessions")
+        else:
+            parts.append("tmux scope: all sessions on this server")
+        if self._self_pane_id and not self._danger_mode:
+            parts.append(f"(own pane {self._self_pane_id} hidden)")
+        if self._last_raw_count == 0:
+            parts.append("tmux returned 0 panes — is tmux running?")
+        return " ".join(parts)
 
     # ------------------------------------------------------------------
     # connected

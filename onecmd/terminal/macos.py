@@ -645,3 +645,33 @@ class MacOSBackend:
         """Clear the cached terminal list."""
         self._terms = []
         self._id_map = {}
+
+    # ---- danger_mode runtime toggle --------------------------------------
+
+    def set_danger_mode(self, enabled: bool) -> None:
+        """Toggle danger_mode at runtime; clears cached window state."""
+        self._danger_mode = bool(enabled)
+        self._terms = []
+        self._id_map = {}
+
+    def is_danger_mode(self) -> bool:
+        return self._danger_mode
+
+    # ---- diagnostic -------------------------------------------------------
+
+    def diagnostic(self) -> str:
+        """Human-readable explanation of the current macOS scope."""
+        parts: list[str] = []
+        if self._danger_mode:
+            parts.append("macOS scope: all on-screen windows (danger_mode)")
+        elif self._parent_pid:
+            parts.append(
+                f"macOS scope: terminal-app windows for PID {self._parent_pid}",
+            )
+            parts.append("→ open another window in the same terminal app, or "
+                         "set danger_mode=true to see other apps' windows")
+        else:
+            parts.append("macOS scope: all known terminal-app windows")
+        parts.append("(windows on other Spaces, minimized, or below the size "
+                     "threshold are not shown)")
+        return " ".join(parts)

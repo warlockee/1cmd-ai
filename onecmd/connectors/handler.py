@@ -86,9 +86,16 @@ def _save_alias(term_id: str, name: str) -> None:
 
 # -- Helpers ---------------------------------------------------------------
 
-def _build_list_text(terminals: list[TermInfo], connected_id: str = "") -> str:
+def _build_list_text(
+    terminals: list[TermInfo],
+    connected_id: str = "",
+    diagnostic: str = "",
+) -> str:
     if not terminals:
-        return "No terminal sessions found."
+        msg = "No terminal sessions found."
+        if diagnostic:
+            msg += f"\n<i>{html_escape(diagnostic)}</i>"
+        return msg
     lines = [f"<b>Terminals</b> ({len(terminals)})"]
     aliases = _load_aliases()
     for i, t in enumerate(terminals, 1):
@@ -139,7 +146,9 @@ async def _show_closed(connector: Connector, chat_id: str, s: _State, backend):
     _disconnect(s)
     terminals = backend.list()
     await connector.send_message(
-        chat_id, "Window closed.\n\n" + _build_list_text(terminals, ""))
+        chat_id,
+        "Window closed.\n\n"
+        + _build_list_text(terminals, "", backend.diagnostic()))
 
 
 # -- Keystroke sending -----------------------------------------------------
@@ -255,7 +264,8 @@ def create_connector_handler(config: Config, store: Store,
         if just_reg:
             terminals = backend.list()
             welcome = build_welcome_message(
-                len(terminals), _build_list_text(terminals))
+                len(terminals),
+                _build_list_text(terminals, "", backend.diagnostic()))
             await connector.send_message(chat_id, welcome)
             return
 
@@ -267,7 +277,8 @@ def create_connector_handler(config: Config, store: Store,
             terminals = backend.list()
             await connector.send_message(
                 chat_id,
-                "\U0001f4bb <b>OneCmd</b>\n\n" + _build_list_text(terminals))
+                "\U0001f4bb <b>OneCmd</b>\n\n"
+                + _build_list_text(terminals, "", backend.diagnostic()))
             return
 
         # 2. TOTP gate
@@ -310,11 +321,40 @@ def create_connector_handler(config: Config, store: Store,
             s.tracked_msgs.clear()
             _disconnect(s)
             await connector.send_message(
-                chat_id, _build_list_text(backend.list()))
+                chat_id,
+                _build_list_text(backend.list(), "", backend.diagnostic()))
             return
 
         if cmd_key == ".help":
             await connector.send_message(chat_id, HELP_TEXT)
+            return
+
+        if cmd_key == ".danger":
+            parts = text.split(None, 1)
+            arg = parts[1].strip().lower() if len(parts) > 1 else ""
+            if arg in ("on", "true", "1"):
+                _disconnect(s)
+                backend.set_danger_mode(True)
+                await connector.send_message(
+                    chat_id,
+                    "⚠️ danger_mode <b>ON</b> — bot can now reach "
+                    "every terminal on this machine.\n\n"
+                    + _build_list_text(
+                        backend.list(), "", backend.diagnostic()))
+            elif arg in ("off", "false", "0"):
+                _disconnect(s)
+                backend.set_danger_mode(False)
+                await connector.send_message(
+                    chat_id,
+                    "danger_mode <b>OFF</b>.\n\n"
+                    + _build_list_text(
+                        backend.list(), "", backend.diagnostic()))
+            else:
+                state = "ON" if backend.is_danger_mode() else "OFF"
+                await connector.send_message(
+                    chat_id,
+                    f"danger_mode is <b>{state}</b>.\n"
+                    "Usage: <code>.danger on</code> | <code>.danger off</code>")
             return
 
         if cmd_key == ".new":
@@ -327,7 +367,8 @@ def create_connector_handler(config: Config, store: Store,
             terminals = backend.list()
             await connector.send_message(
                 chat_id,
-                "\u2705 Terminal created.\n\n" + _build_list_text(terminals))
+                "\u2705 Terminal created.\n\n"
+                + _build_list_text(terminals, "", backend.diagnostic()))
             return
 
         if cmd_key == ".rename":
@@ -531,7 +572,8 @@ def create_connector_handler(config: Config, store: Store,
         # 8. Default: show terminal list
         if not need_display:
             await connector.send_message(
-                chat_id, _build_list_text(backend.list()))
+                chat_id,
+                _build_list_text(backend.list(), "", backend.diagnostic()))
             return
 
         # Post-keystroke display

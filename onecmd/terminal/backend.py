@@ -58,6 +58,9 @@ class Backend(Protocol):
     def send_keys(self, term_id: str, text: str, literal: bool = True) -> bool: ...
     def create(self) -> str | None: ...
     def free_list(self) -> None: ...
+    def diagnostic(self) -> str: ...
+    def set_danger_mode(self, enabled: bool) -> None: ...
+    def is_danger_mode(self) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +115,22 @@ class ValidatedBackend:
     def free_list(self) -> None:
         self._inner.free_list()
 
+    def diagnostic(self) -> str:
+        fn = getattr(self._inner, "diagnostic", None)
+        return fn() if callable(fn) else ""
+
+    def set_danger_mode(self, enabled: bool) -> None:
+        fn = getattr(self._inner, "set_danger_mode", None)
+        if callable(fn):
+            fn(enabled)
+        # Old term ids are no longer valid; force a fresh list() before any
+        # ID-validated call (send_keys / capture / connected).
+        self._known_ids = set()
+
+    def is_danger_mode(self) -> bool:
+        fn = getattr(self._inner, "is_danger_mode", None)
+        return bool(fn()) if callable(fn) else False
+
     # -- internal --
 
     def _validate_id(self, term_id: str) -> None:
@@ -154,7 +173,11 @@ def create_backend(scope: Scope, danger_mode: bool = False) -> ValidatedBackend:
     cls = getattr(mod, cls_name)
 
     if key == "tmux":
-        inner = cls(session_name=scope.session_name)
+        inner = cls(
+            session_name=scope.session_name,
+            self_pane_id=scope.self_pane_id,
+            danger_mode=danger_mode,
+        )
     else:
         inner = cls(parent_pid=scope.parent_pid, danger_mode=danger_mode)
 

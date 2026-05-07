@@ -31,6 +31,7 @@ class Scope:
     use_tmux: bool
     session_name: str | None = None
     parent_pid: int | None = None
+    self_pane_id: str | None = None  # tmux pane that the agent is running in
 
 
 def _detect_tmux_session() -> str | None:
@@ -42,6 +43,22 @@ def _detect_tmux_session() -> str | None:
         )
         name = result.stdout.strip()
         return name if result.returncode == 0 and name else None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _detect_self_pane_id() -> str | None:
+    """Return the tmux pane id this process is running in, or None."""
+    try:
+        result = subprocess.run(
+            ["tmux", "display-message", "-p", "#{pane_id}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        pid = result.stdout.strip()
+        # Pane IDs look like %0, %1, ...
+        if result.returncode == 0 and pid.startswith("%") and pid[1:].isdigit():
+            return pid
+        return None
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
 
@@ -87,8 +104,9 @@ def detect_scope() -> Scope:
     """Detect the terminal scope at startup. Returns a frozen Scope."""
     session = _detect_tmux_session()
     if session:
-        log.info("Scope: tmux session '%s'", session)
-        return Scope(use_tmux=True, session_name=session)
+        self_pane = _detect_self_pane_id()
+        log.info("Scope: tmux session '%s' (self pane=%s)", session, self_pane)
+        return Scope(use_tmux=True, session_name=session, self_pane_id=self_pane)
 
     parent = _detect_parent_terminal()
     if parent:

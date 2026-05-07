@@ -488,3 +488,111 @@ class TestOSError:
         assert backend.connected("%0") is False
         assert backend.capture("%0") is None
         assert backend.send_keys("%0", "x") is False
+
+
+# ---------------------------------------------------------------------------
+# Self-pane filtering and danger_mode (Plan A UX improvements)
+# ---------------------------------------------------------------------------
+
+
+class TestSelfPaneFilter:
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_self_pane_filtered_from_list(self, mock_run: MagicMock) -> None:
+        """The pane the agent runs in must not appear in list()."""
+        mock_run.return_value = _ok(
+            "%0\t100\tbash\tagent\n%1\t101\tvim\teditor\n%2\t102\tssh\tremote\n"
+        )
+        backend = TmuxBackend(session_name="work", self_pane_id="%0")
+        panes = backend.list()
+        ids = [p.id for p in panes]
+        assert "%0" not in ids
+        assert ids == ["%1", "%2"]
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_self_pane_unset_no_filter(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("%0\t100\tbash\tx\n%1\t101\tvim\ty\n")
+        backend = TmuxBackend(session_name="work", self_pane_id=None)
+        ids = [p.id for p in backend.list()]
+        assert ids == ["%0", "%1"]
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_self_pane_only_returns_empty(self, mock_run: MagicMock) -> None:
+        """When the only pane is the agent's own, list is empty."""
+        mock_run.return_value = _ok("%0\t100\tbash\tagent\n")
+        backend = TmuxBackend(session_name="work", self_pane_id="%0")
+        assert backend.list() == []
+
+
+class TestDangerMode:
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_danger_mode_uses_server_wide(self, mock_run: MagicMock) -> None:
+        """danger_mode=True uses -a (all sessions) even if session_name set."""
+        mock_run.return_value = _ok("")
+        backend = TmuxBackend(session_name="work", danger_mode=True)
+        backend.list()
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["tmux", "list-panes", "-a", "-F", _LIST_FORMAT]
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_danger_mode_does_not_filter_self(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("%0\t100\tbash\tagent\n%1\t101\tvim\ty\n")
+        backend = TmuxBackend(self_pane_id="%0", danger_mode=True)
+        ids = [p.id for p in backend.list()]
+        assert ids == ["%0", "%1"]
+
+
+class TestDiagnostic:
+    def test_diagnostic_session_scoped(self) -> None:
+        backend = TmuxBackend(session_name="work", self_pane_id="%0")
+        diag = backend.diagnostic()
+        assert "work" in diag
+        assert "%0" in diag
+        # Hint at how to widen scope
+        assert "danger_mode" in diag
+
+    def test_diagnostic_danger_mode(self) -> None:
+        backend = TmuxBackend(session_name="work", danger_mode=True)
+        diag = backend.diagnostic()
+        assert "danger_mode" in diag
+        # Self pane is not hidden in danger_mode, so should not mention it
+        assert "hidden" not in diag
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_diagnostic_no_panes(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("")
+        backend = TmuxBackend(session_name="work")
+        backend.list()
+        assert "0 panes" in backend.diagnostic()
+
+
+class TestRuntimeDangerToggle:
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_toggle_on_widens_scope(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = _ok("")
+        backend = TmuxBackend(session_name="work", self_pane_id="%0")
+        backend.list()
+        # Initially session-scoped
+        assert mock_run.call_args[0][0] == [
+            "tmux", "list-panes", "-s", "-t", "work", "-F", _LIST_FORMAT,
+        ]
+        backend.set_danger_mode(True)
+        assert backend.is_danger_mode() is True
+        backend.list()
+        # After toggle: server-wide
+        assert mock_run.call_args[0][0] == [
+            "tmux", "list-panes", "-a", "-F", _LIST_FORMAT,
+        ]
+
+    @patch("onecmd.terminal.tmux.subprocess.run")
+    def test_toggle_off_restores_self_filter(
+        self, mock_run: MagicMock,
+    ) -> None:
+        mock_run.return_value = _ok("%0\t100\tbash\tagent\n%1\t101\tvim\ty\n")
+        backend = TmuxBackend(session_name="work", self_pane_id="%0",
+                              danger_mode=True)
+        ids = [p.id for p in backend.list()]
+        assert "%0" in ids  # danger: self visible
+        backend.set_danger_mode(False)
+        assert backend.is_danger_mode() is False
+        ids = [p.id for p in backend.list()]
+        assert "%0" not in ids  # filter restored

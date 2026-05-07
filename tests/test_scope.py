@@ -282,3 +282,44 @@ class TestDetectScope:
         assert scope.use_tmux is False
         assert scope.session_name is None
         assert scope.parent_pid is None
+
+    def test_tmux_populates_self_pane_id(self):
+        """When tmux is detected, scope captures the agent's own pane id."""
+        with (
+            patch(
+                "onecmd.terminal.scope._detect_tmux_session", return_value="dev"
+            ),
+            patch(
+                "onecmd.terminal.scope._detect_self_pane_id", return_value="%3"
+            ),
+        ):
+            scope = detect_scope()
+        assert scope.use_tmux is True
+        assert scope.session_name == "dev"
+        assert scope.self_pane_id == "%3"
+
+
+class TestDetectSelfPaneId:
+    def test_returns_pane_id(self):
+        from onecmd.terminal.scope import _detect_self_pane_id
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="%7\n", stderr=""
+        )
+        with patch("onecmd.terminal.scope.subprocess.run", return_value=result):
+            assert _detect_self_pane_id() == "%7"
+
+    def test_invalid_format_returns_none(self):
+        from onecmd.terminal.scope import _detect_self_pane_id
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="garbage\n", stderr=""
+        )
+        with patch("onecmd.terminal.scope.subprocess.run", return_value=result):
+            assert _detect_self_pane_id() is None
+
+    def test_no_tmux_returns_none(self):
+        from onecmd.terminal.scope import _detect_self_pane_id
+        with patch(
+            "onecmd.terminal.scope.subprocess.run",
+            side_effect=FileNotFoundError,
+        ):
+            assert _detect_self_pane_id() is None
