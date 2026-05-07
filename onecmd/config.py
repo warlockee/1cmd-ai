@@ -35,7 +35,12 @@ class Config(BaseModel, extra="forbid"):
 
     apikey: str = Field(min_length=1, description="Telegram bot token")
     dbfile: str = Field(default="./mybot.sqlite", description="SQLite database path")
-    danger_mode: bool = Field(default=False, description="Attach to any window")
+    danger_mode: bool = Field(
+        default=True,
+        description="Widen scope: see all tmux sessions on the server and "
+                    "(on macOS) all terminal-app windows. Default ON; pass "
+                    "--safe-mode to confine to the current session/PID.",
+    )
     weak_security: bool = Field(default=False, description="Skip OTP authentication")
     enable_otp: bool = Field(default=False, description="Enable TOTP on first run")
     verbose: bool = Field(default=False, description="Debug-level logging")
@@ -128,7 +133,7 @@ def parse_config(argv: list[str] | None = None) -> Config:
     # --- Parse CLI args (simple flag loop, matching C main.c) ---
     apikey: str | None = None
     dbfile: str = "./mybot.sqlite"
-    danger_mode: bool = False
+    danger_mode: bool = True
     weak_security: bool = False
     enable_otp: bool = False
     verbose: bool = False
@@ -144,7 +149,10 @@ def parse_config(argv: list[str] | None = None) -> Config:
             i += 1
             dbfile = argv[i]
         elif arg == "--dangerously-attach-to-any-window":
+            # Kept for backward compatibility; danger_mode is now the default.
             danger_mode = True
+        elif arg == "--safe-mode":
+            danger_mode = False
         elif arg == "--use-weak-security":
             weak_security = True
         elif arg == "--enable-otp":

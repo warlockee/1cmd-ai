@@ -171,7 +171,8 @@ Then run onecmd separately (outside tmux or in its own tmux window) and use `.li
 | `--enable-otp` | Enable TOTP authentication (off by default) |
 | `--use-weak-security` | Disable TOTP even if previously configured |
 | `--dbfile <path>` | Custom database path (default: `./mybot.sqlite`) |
-| `--dangerously-attach-to-any-window` | Show all windows, not just terminals (macOS only) |
+| `--safe-mode` | Confine the bot to the current tmux session / parent terminal PID (default: see everything) |
+| `--dangerously-attach-to-any-window` | Legacy alias; danger_mode is the default — flag retained for backward compatibility |
 | `--verbose` | Enable debug logging |
 
 ### Environment Variables

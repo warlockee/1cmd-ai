@@ -49,7 +49,7 @@ class TestDefaults:
         cfg = _parse()
         assert cfg.apikey == "123:ABC"
         assert cfg.dbfile == "./mybot.sqlite"
-        assert cfg.danger_mode is False
+        assert cfg.danger_mode is True
         assert cfg.weak_security is False
         assert cfg.enable_otp is False
         assert cfg.verbose is False
@@ -101,6 +101,12 @@ class TestCLIParsing:
         assert cfg.weak_security is True
         assert cfg.enable_otp is True
         assert cfg.verbose is True
+
+    def test_safe_mode_opts_out_of_danger(self):
+        argv = ["onecmd", "--apikey", "tok", "--safe-mode"]
+        with mock.patch.dict(os.environ, {}, clear=True):
+            cfg = parse_config(argv)
+        assert cfg.danger_mode is False
 
     def test_unknown_flags_ignored(self):
         """Unknown CLI flags are silently ignored (matching C behavior)."""
