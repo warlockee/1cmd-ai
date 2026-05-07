@@ -156,29 +156,37 @@ class ValidatedBackend:
 # ---------------------------------------------------------------------------
 
 
-def create_backend(scope: Scope, danger_mode: bool = False) -> ValidatedBackend:
-    """Create a scoped, validated backend based on the detected scope."""
-    if scope.use_tmux:
-        key = "tmux"
-    elif sys.platform == "darwin":
-        key = "macos"
-    else:
-        # Linux/non-macOS: default to tmux backend even when no current session
-        # is detected; backend will operate across all tmux sessions.
-        key = "tmux"
-
+def _instantiate(key: str, scope: Scope, danger_mode: bool):
+    """Build a single inner backend by registry key."""
     fqn = BACKENDS[key]
     mod_path, cls_name = fqn.rsplit(".", 1)
     mod = importlib.import_module(mod_path)
     cls = getattr(mod, cls_name)
-
     if key == "tmux":
-        inner = cls(
+        return cls(
             session_name=scope.session_name,
             self_pane_id=scope.self_pane_id,
             danger_mode=danger_mode,
         )
+    return cls(parent_pid=scope.parent_pid, danger_mode=danger_mode)
+
+
+def create_backend(scope: Scope, danger_mode: bool = False) -> ValidatedBackend:
+    """Create a scoped, validated backend based on the detected scope.
+
+    On macOS the backend is the union of tmux + CGWindowList so the bot
+    can drive both tmux panes and GUI terminal windows. On other platforms
+    only the tmux backend is available.
+    """
+    if sys.platform == "darwin":
+        tmux_inner = _instantiate("tmux", scope, danger_mode)
+        macos_inner = _instantiate("macos", scope, danger_mode)
+        from onecmd.terminal.combined import CombinedBackend
+        inner = CombinedBackend(tmux_inner, macos_inner)
+    elif scope.use_tmux:
+        inner = _instantiate("tmux", scope, danger_mode)
     else:
-        inner = cls(parent_pid=scope.parent_pid, danger_mode=danger_mode)
+        # Linux without tmux session: still try tmux (may have other sessions)
+        inner = _instantiate("tmux", scope, danger_mode)
 
     return ValidatedBackend(inner)

@@ -211,38 +211,47 @@ class TestFreeList:
 
 
 class TestCreateBackend:
+    @pytest.mark.skipif(sys.platform == "darwin",
+                        reason="darwin uses CombinedBackend")
     def test_tmux_scope_creates_tmux_backend(self) -> None:
         scope = Scope(use_tmux=True, session_name="main")
         vb = create_backend(scope)
         assert isinstance(vb, ValidatedBackend)
-        # Inner should be TmuxBackend
         from onecmd.terminal.tmux import TmuxBackend
-
         assert isinstance(vb._inner, TmuxBackend)
         assert vb._inner._session_name == "main"
 
     @pytest.mark.skipif(sys.platform != "darwin", reason="macOS only")
-    def test_macos_scope_creates_macos_backend(self) -> None:
-        """Test that macos scope resolves to the MacOSBackend class."""
-        # MacOSBackend requires pyobjc which may not be installed in test env.
-        # Mock the import to verify the factory wiring.
-        mock_inner = FakeBackend([FakeTermInfo(id="42")])
+    def test_darwin_creates_combined_backend(self) -> None:
+        """On darwin, create_backend always returns a CombinedBackend
+        wrapping both a TmuxBackend and a MacOSBackend, so the bot can
+        drive tmux panes AND GUI terminal windows simultaneously."""
+        from onecmd.terminal.combined import CombinedBackend
+        from onecmd.terminal.tmux import TmuxBackend
 
+        # MacOSBackend requires pyobjc; mock its import.
         class MockMacOSBackend:
             def __init__(self, parent_pid, danger_mode):
                 self.parent_pid = parent_pid
                 self.danger_mode = danger_mode
 
-        mock_mod = type(sys)("fake_macos")
-        mock_mod.MacOSBackend = MockMacOSBackend  # type: ignore[attr-defined]
+        real_import = importlib.import_module
 
-        scope = Scope(use_tmux=False, parent_pid=1234)
-        with patch.object(importlib, "import_module", return_value=mock_mod):
+        def fake_import(name, *a, **kw):
+            if name == "onecmd.terminal.macos":
+                mod = type(sys)("fake_macos")
+                mod.MacOSBackend = MockMacOSBackend  # type: ignore[attr-defined]
+                return mod
+            return real_import(name, *a, **kw)
+
+        scope = Scope(use_tmux=True, session_name="main", self_pane_id="%0")
+        with patch.object(importlib, "import_module", side_effect=fake_import):
             vb = create_backend(scope, danger_mode=True)
         assert isinstance(vb, ValidatedBackend)
-        assert isinstance(vb._inner, MockMacOSBackend)
-        assert vb._inner.parent_pid == 1234  # type: ignore[attr-defined]
-        assert vb._inner.danger_mode is True  # type: ignore[attr-defined]
+        assert isinstance(vb._inner, CombinedBackend)
+        assert isinstance(vb._inner._tmux, TmuxBackend)
+        assert isinstance(vb._inner._macos, MockMacOSBackend)
+        assert vb._inner._macos.danger_mode is True
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +266,11 @@ class TestPlatformConditional:
         else:
             assert "macos" not in BACKENDS
 
+    @pytest.mark.skipif(sys.platform == "darwin",
+                        reason="darwin always loads macOS backend")
     def test_pyobjc_not_imported_for_tmux_backend(self) -> None:
-        """Creating a tmux backend should never import pyobjc modules."""
+        """On non-darwin platforms, creating a tmux backend must never
+        import pyobjc modules."""
         scope = Scope(use_tmux=True, session_name="test")
         original_import = importlib.import_module
         imported_modules: list[str] = []
@@ -270,7 +282,6 @@ class TestPlatformConditional:
         with patch.object(importlib, "import_module", side_effect=tracking_import):
             create_backend(scope)
 
-        # No pyobjc or macos module should have been imported
         for mod in imported_modules:
             assert "macos" not in mod
             assert "pyobjc" not in mod
